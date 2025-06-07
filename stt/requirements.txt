@@ -1,0 +1,3 @@
+sounddevice
+vosk
+python-dotenv
