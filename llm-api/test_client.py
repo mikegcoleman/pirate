@@ -2,7 +2,7 @@ import requests
 import sys
 sys.stdout.reconfigure(encoding='utf-8')
 
-API_URL = "http://localhost:8080/api/chat"
+API_URL = "http://192.168.86.38:8080/api/chat"
 
 test_cases = [
     "What's the best kind of rum for a pirate?",
