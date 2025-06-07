@@ -34,5 +34,4 @@ def transcribe():
                 result = recognizer.Result()
                 text = eval(result).get("text", "")
                 if text:
-                    print(f"🗣️ Heard: {text}")
                     return text

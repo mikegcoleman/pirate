@@ -1,3 +1,4 @@
 sounddevice
 vosk
 python-dotenv
+requests
