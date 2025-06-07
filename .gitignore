@@ -1,0 +1,41 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+venv/
+.env
+
+# Environment variables
+*.env
+
+# Docker files
+*.log
+*.pid
+*.tar
+*.bak
+
+# Local Docker volumes, images, and containers
+docker-compose.override.yml
+
+# VS Code settings
+.vscode/
+
+# OS-generated files
+.DS_Store
+Thumbs.db
+
+# Test output
+output.txt
+
+# Python and dependency files
+pip-log.txt
+pytest_cache/
+*.cover
+coverage.xml
+htmlcov/
+
+# Others
+.idea/
+*.iml
