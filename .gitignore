@@ -4,11 +4,12 @@ __pycache__/
 *$py.class
 
 # Virtual environment
-venv/
-.env
+**/venv/
+
 
 # Environment variables
 *.env
+**/.env
 
 # Docker files
 *.log
