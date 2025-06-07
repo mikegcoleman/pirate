@@ -91,9 +91,9 @@ def call_llm_api(user_message):
     headers = {"Content-Type": "application/json"}
     
     # Send request to LLM API
-    print(f"Sending request to LLM API: {json.dumps(chat_request, indent=2)}")
-    print(f"Using model: {get_model_name()}")
-    print(f"Using endpoint: {get_llm_endpoint()}")
+    # print(f"Sending request to LLM API: {json.dumps(chat_request, indent=2)}")
+    # print(f"Using model: {get_model_name()}")
+    # print(f"Using endpoint: {get_llm_endpoint()}")
     response = requests.post(
         get_llm_endpoint(),
         headers=headers,
