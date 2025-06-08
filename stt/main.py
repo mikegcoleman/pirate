@@ -12,7 +12,6 @@ def speak_text(text):
     subprocess.run(["say", "-v", VOICE, "-r", SPEECH_RATE, text])
 
 
-
 async def send_request(text):
     async with httpx.AsyncClient() as client:
         return await client.post(API_URL, json={"message": text}, timeout=90)
