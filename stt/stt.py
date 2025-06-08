@@ -11,7 +11,7 @@ MODEL_PATH = os.path.abspath(os.getenv("VOSK_MODEL_PATH", "models/vosk-model-sma
 print(f"Using Vosk model at: {MODEL_PATH}")
 
 SAMPLE_RATE = int(os.getenv("SAMPLE_RATE", 16000))
-DEVICE = os.getenv("MIC_DEVICE", "default")
+DEVICE = os.getenv("MIC_DEVICE", "RØDE VideoMic NTG")
 
 q = queue.Queue()
 
