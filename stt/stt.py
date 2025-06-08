@@ -41,7 +41,7 @@ def transcribe():
     model = vosk.Model(MODEL_PATH)
     recognizer = vosk.KaldiRecognizer(model, SAMPLE_RATE)
 
-    print("🎤 Listening... Press Ctrl+C to stop.")
+    print("Listening... Press Ctrl+C to stop.")
 
     with sd.RawInputStream(samplerate=SAMPLE_RATE, blocksize=8000, dtype='int16',
                            channels=1, callback=callback, device=DEVICE):

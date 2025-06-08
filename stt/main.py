@@ -54,16 +54,16 @@ async def send_request(chat_request):
     async with httpx.AsyncClient() as client:
         return await client.post(API_URL, json=chat_request, timeout=90)
 
+# Build the initial JSON object for the chat request
 messages = [{"role": "system", "content": load_prompt()}]
-
 chat_request = {
     "model": LLM_MODEL,
     "messages": messages
 }
 
 def remove_nonstandard(text):
-    """Remove all characters except letters, numbers, and normal punctuation (. , ! ? ; ,), and replace pirate 'Arr' or 'Arrr...' (standalone, case-insensitive) with 'Are'."""
-    import re
+    """Remove all characters except letters, numbers, and normal punctuation (. , ! ? ; ,), 
+    and replace pirate 'Arr' or 'Arrr...' (standalone, case-insensitive) with 'Are'."""
     # Replace standalone 'Arr', 'Arrr', etc. (case-insensitive, not part of another word) with 'Are'
     text = re.sub(r'\b[Aa]rr*\b', 'Are', text)
     # Only keep letters, numbers, space, and . , ! ? ; ,
