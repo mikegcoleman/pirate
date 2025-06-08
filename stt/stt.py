@@ -6,7 +6,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-MODEL_PATH = os.getenv("VOSK_MODEL_PATH", "models/vosk-model-small-en-us-0.15")
+MODEL_PATH = os.path.abspath(os.getenv("VOSK_MODEL_PATH", "models/vosk-model-small-en-us-0.15"))\
+
+print(f"Using Vosk model at: {MODEL_PATH}")
+
 SAMPLE_RATE = int(os.getenv("SAMPLE_RATE", 16000))
 DEVICE = os.getenv("MIC_DEVICE", "default")
 
