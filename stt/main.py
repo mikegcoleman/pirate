@@ -7,6 +7,7 @@ import sys
 import json
 import dotenv
 import re
+import random
 
 """Main script for Mr. Bones, the pirate voice assistant.
 Handles speech-to-text, prompt loading, LLM API requests, and text-to-speech output.
@@ -68,6 +69,32 @@ def remove_nonstandard(text):
     # Only keep letters, numbers, space, and . , ! ? ; ,
     return re.sub(r"[^a-zA-Z0-9\s\.,!\?;:]", "", text)
 
+# Thinking and waiting phrases
+THINKING_PHRASES = [
+    "Hmm, let me think on that!",
+    "A moment, matey, while I ponder!",
+    "Let me see...",
+    "Give me a hot second to think on that one!",
+    "Let me consult me map of knowledge!",
+    "Arr, that's a puzzler! Give me a moment!",
+    "Let me search the seven seas for an answer!",
+    "Hold tight, I'm wrackin' me brain!",
+    "Let me put on me thinkin' hat!",
+    "This one needs a bit o' thought, matey!"
+]
+WAITING_PHRASES = [
+    "Don't worry, I'm still here!",
+    "Still thinking, hold tight!",
+    "Just a moment more, matey!",
+    "I'm working on it, don't go anywhere!",
+    "The answer be comin' soon, I promise!",
+    "Still searchin' the depths for ye answer!",
+    "Hang on, me brain's still churnin'!",
+    "Almost there, matey!",
+    "Patience, the seas be rough today!",
+    "Keep yer hat on, I'm nearly done!"
+]
+
 async def main():
     """Main event loop for the Mr. Bones assistant.
     Handles speech-to-text, LLM API requests, and output.
@@ -80,14 +107,21 @@ async def main():
             print("Heard only 'huh', ignoring and waiting for next input...")
             continue
         print("\nMr. Bones is thinking...")
-        # speak_text("Mr. Bones is thinking")
+        # Play a random thinking phrase immediately
+        speak_text(random.choice(THINKING_PHRASES))
 
         request_task = asyncio.create_task(send_request(chat_request))
         messages.append({"role": "user", "content": text})
 
+        wait_time = 0
+        WAIT_INTERVAL = 3  # seconds
         while not request_task.done():
+            await asyncio.sleep(1)
+            wait_time += 1
+            # Every WAIT_INTERVAL seconds, play a waiting phrase
+            if wait_time % WAIT_INTERVAL == 0:
+                speak_text(random.choice(WAITING_PHRASES))
             print("Still waiting...")
-            await asyncio.sleep(1)  # Check every second
 
         try:
             response = await request_task
