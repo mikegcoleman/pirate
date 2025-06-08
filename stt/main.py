@@ -1,3 +1,5 @@
+# Todo: Use wait time env variable to control how long to wait for speech input
+
 import stt
 import subprocess
 import os
@@ -8,6 +10,7 @@ import json
 import dotenv
 import re
 import random
+from TTS.api import TTS
 
 """Main script for Mr. Bones, the pirate voice assistant.
 Handles speech-to-text, prompt loading, LLM API requests, and text-to-speech output.
@@ -25,6 +28,10 @@ if not LLM_MODEL:
     print("Error: LLM_MODEL environment variable is not set.")
     sys.exit(1)
 
+# Initialize Coqui TTS model (load once)
+TTS_MODEL_NAME = os.getenv("COQUI_TTS_MODEL", "tts_models/en/ljspeech/tacotron2-DDC")
+tts_engine = TTS(model_name=TTS_MODEL_NAME)
+
 def load_prompt():
     """Load the pirate prompt from a file specified by PROMPT_FILE env var or an error if the file is not found.
     Returns:
@@ -38,11 +45,14 @@ def load_prompt():
         return f.read().strip()
 
 def speak_text(text):
-    """Speak the given text using macOS 'say' command with the configured voice and rate.
-    Args:
-        text (str): The text to speak.
-    """
-    subprocess.run(["say", "-v", VOICE, "-r", SPEECH_RATE, text])
+    """Speak the given text using Coqui TTS and play the output audio file."""
+    output_path = "tts_output.wav"
+    tts_engine.tts_to_file(text=text, file_path=output_path)
+    # Play the audio file (macOS: afplay, Linux: aplay)
+    if sys.platform == "darwin":
+        subprocess.run(["afplay", output_path])
+    else:
+        subprocess.run(["aplay", output_path])
 
 async def send_request(chat_request):
     """Send a chat request to the LLM API and return the response.
@@ -121,7 +131,6 @@ async def main():
             # Every WAIT_INTERVAL seconds, play a waiting phrase
             if wait_time % WAIT_INTERVAL == 0:
                 speak_text(random.choice(WAITING_PHRASES))
-            print("Still waiting...")
 
         try:
             response = await request_task
@@ -132,7 +141,7 @@ async def main():
             else:
                 clean_response = remove_nonstandard(response.json()["response"])
                 print("Response:", clean_response)
-            # speak_text(clean_response)
+            speak_text(clean_response)
             messages.append({
                 "role": "assistant",
                 "content": clean_response
