@@ -60,23 +60,13 @@ chat_request = {
     "messages": messages
 }
 
-def remove_emojis(text):
-    """Remove all emojis from the given text string.
-    Args:
-        text (str): The text to clean.
-    Returns:
-        str: The text with emojis removed.
-    """
-    emoji_pattern = re.compile(
-        "["
-        "\U0001F600-\U0001F64F"  # emoticons
-        "\U0001F300-\U0001F5FF"  # symbols & pictographs
-        "\U0001F680-\U0001F6FF"  # transport & map symbols
-        "\U0001F1E0-\U0001F1FF"  # flags (iOS)
-        "\U00002700-\U000027BF"  # Dingbats
-        "\U000024C2-\U0001F251"
-        "]+", flags=re.UNICODE)
-    return emoji_pattern.sub(r'', text)
+def remove_nonstandard(text):
+    """Remove all characters except letters, numbers, and normal punctuation (. , ! ? ; ,), and replace pirate 'Arr' or 'Arrr...' (standalone, case-insensitive) with 'Are'."""
+    import re
+    # Replace standalone 'Arr', 'Arrr', etc. (case-insensitive, not part of another word) with 'Are'
+    text = re.sub(r'\b[Aa]rr*\b', 'Are', text)
+    # Only keep letters, numbers, space, and . , ! ? ; ,
+    return re.sub(r"[^a-zA-Z0-9\s\.,!\?;:]", "", text)
 
 async def main():
     """Main event loop for the Mr. Bones assistant.
@@ -85,6 +75,10 @@ async def main():
     while True:
         text = stt.transcribe()
         print("Transcribed text:", text)
+        # If the transcription is just 'huh' (case-insensitive, with or without punctuation), skip sending to LLM
+        if text.strip().lower().strip('.,!?;:') == "huh":
+            print("Heard only 'huh', ignoring and waiting for next input...")
+            continue
         print("\nMr. Bones is thinking...")
         # speak_text("Mr. Bones is thinking")
 
@@ -102,7 +96,7 @@ async def main():
             if "error" in response_data:
                 print("Error from API:", response_data["error"])
             else:
-                clean_response = remove_emojis(response.json()["response"])
+                clean_response = remove_nonstandard(response.json()["response"])
                 print("Response:", clean_response)
             # speak_text(clean_response)
             messages.append({
