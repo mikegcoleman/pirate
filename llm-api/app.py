@@ -1,9 +1,13 @@
 import os
 import json
 import requests
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 import signal
 import sys
+from TTS.api import TTS
+import tempfile
+import base64
+import torch
     
 def handle_shutdown(signum, frame):
     print(f"🔌 Received signal {signum}, shutting down gracefully...")
@@ -14,6 +18,19 @@ signal.signal(signal.SIGINT, handle_shutdown)
 signal.signal(signal.SIGTERM, handle_shutdown)
 
 app = Flask(__name__)
+
+# Initialize Coqui TTS model (load once)
+use_gpu = torch.cuda.is_available()
+
+tts_engine = TTS(model_name="tts_models/en/ljspeech/tacotron2-DDC")
+if use_gpu:
+    try:
+        tts_engine.to("cuda")
+    except RuntimeError as e:
+        print("⚠️ Could not use GPU for TTS, falling back to CPU:", e)
+        tts_engine.to("cpu")
+else:
+    tts_engine.to("cpu")
 
 def get_llm_endpoint():
     """Returns the complete LLM API endpoint URL"""
@@ -35,8 +52,14 @@ def chat_api():
 
     # Call the LLM API
     try:
-        response = call_llm_api(chat_request)
-        return jsonify({'response': response})
+        response_text = call_llm_api(chat_request)
+        # Generate TTS audio for the response
+        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_audio:
+            tts_engine.tts_to_file(text=response_text, file_path=tmp_audio.name)
+            tmp_audio.seek(0)
+            audio_bytes = tmp_audio.read()
+            audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
+        return jsonify({'response': response_text, 'audio_base64': audio_b64})
     except Exception as e:
         app.logger.error(f"Error calling LLM API: {e}")
         return jsonify({'error': 'Failed to get response from LLM'}), 500
