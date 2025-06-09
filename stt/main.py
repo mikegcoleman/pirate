@@ -10,7 +10,6 @@ import json
 import dotenv
 import re
 import random
-from TTS.api import TTS
 
 """Main script for Mr. Bones, the pirate voice assistant.
 Handles speech-to-text, prompt loading, LLM API requests, and text-to-speech output.
@@ -27,10 +26,6 @@ LLM_MODEL   = os.getenv("LLM_MODEL")
 if not LLM_MODEL:
     print("Error: LLM_MODEL environment variable is not set.")
     sys.exit(1)
-
-# Initialize Coqui TTS model (load once)
-TTS_MODEL_NAME = os.getenv("COQUI_TTS_MODEL", "tts_models/en/ljspeech/tacotron2-DDC")
-tts_engine = TTS(model_name=TTS_MODEL_NAME)
 
 # Thinking and waiting phrases
 THINKING_PHRASES = [
@@ -69,16 +64,6 @@ def load_prompt():
         sys.exit(1)
     with open(prompt_file, 'r', encoding='utf-8') as f:
         return f.read().strip()
-
-def speak_text(text):
-    """Speak the given text using Coqui TTS and play the output audio file."""
-    output_path = "tts_output.wav"
-    tts_engine.tts_to_file(text=text, file_path=output_path)
-    # Play the audio file (macOS: afplay, Linux: aplay)
-    if sys.platform == "darwin":
-        subprocess.run(["afplay", output_path])
-    else:
-        subprocess.run(["aplay", output_path])
 
 def format_mistral_prompt(messages):
     prompt = ""
@@ -165,20 +150,25 @@ async def main():
             print("Heard only 'huh', ignoring and waiting for next input...")
             continue
         print("\nMr. Bones is thinking...")
-        # Play a random thinking phrase immediately
-        speak_text(random.choice(THINKING_PHRASES))
+        # Play a random thinking phrase immediately (optional, can be removed)
+        # speak_text(random.choice(THINKING_PHRASES))
 
-        request_task = asyncio.create_task(send_request(chat_request))
+        # Build chat history and send to API
         messages.append({"role": "user", "content": text})
+        chat_request = {
+            "model": LLM_MODEL,
+            "messages": messages
+        }
+        request_task = asyncio.create_task(send_request(chat_request))
 
         wait_time = 0
         WAIT_INTERVAL = 3  # seconds
         while not request_task.done():
             await asyncio.sleep(1)
             wait_time += 1
-            # Every WAIT_INTERVAL seconds, play a waiting phrase
-            if wait_time % WAIT_INTERVAL == 0:
-                speak_text(random.choice(WAITING_PHRASES))
+            # Every WAIT_INTERVAL seconds, play a waiting phrase (optional, can be removed)
+            # if wait_time % WAIT_INTERVAL == 0:
+            #     speak_text(random.choice(WAITING_PHRASES))
 
         try:
             response = await request_task
@@ -187,13 +177,24 @@ async def main():
             if "error" in response_data:
                 print("Error from API:", response_data["error"])
             else:
-                clean_response = remove_nonstandard(response.json()["response"])
+                clean_response = remove_nonstandard(response_data["response"])
                 print("Response:", clean_response)
-            speak_text(clean_response)
-            messages.append({
-                "role": "assistant",
-                "content": clean_response
-            })
+                # Play the audio response from API
+                if "audio_base64" in response_data:
+                    audio_bytes = base64.b64decode(response_data["audio_base64"])
+                    with open("tts_output.wav", "wb") as f:
+                        f.write(audio_bytes)
+                    # Play the audio file (macOS: afplay, Linux: aplay, Windows: powershell)
+                    if sys.platform == "darwin":
+                        subprocess.run(["afplay", "tts_output.wav"])
+                    elif sys.platform.startswith("win"):
+                        subprocess.run(["powershell", "-c", "(New-Object Media.SoundPlayer 'tts_output.wav').PlaySync();"])
+                    else:
+                        subprocess.run(["aplay", "tts_output.wav"])
+                messages.append({
+                    "role": "assistant",
+                    "content": clean_response
+                })
         except Exception as e:
             print("Error:", str(e))
 
