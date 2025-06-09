@@ -32,53 +32,6 @@ if not LLM_MODEL:
 TTS_MODEL_NAME = os.getenv("COQUI_TTS_MODEL", "tts_models/en/ljspeech/tacotron2-DDC")
 tts_engine = TTS(model_name=TTS_MODEL_NAME)
 
-def load_prompt():
-    """Load the pirate prompt from a file specified by PROMPT_FILE env var or an error if the file is not found.
-    Returns:
-        str: The prompt text.
-    """
-    prompt_file = os.getenv("PROMPT_FILE", "prompt.txt")
-    if not os.path.isfile(prompt_file):
-        print(f"Error: Prompt file '{prompt_file}' not found.")
-        sys.exit(1)
-    with open(prompt_file, 'r', encoding='utf-8') as f:
-        return f.read().strip()
-
-def speak_text(text):
-    """Speak the given text using Coqui TTS and play the output audio file."""
-    output_path = "tts_output.wav"
-    tts_engine.tts_to_file(text=text, file_path=output_path)
-    # Play the audio file (macOS: afplay, Linux: aplay)
-    if sys.platform == "darwin":
-        subprocess.run(["afplay", output_path])
-    else:
-        subprocess.run(["aplay", output_path])
-
-async def send_request(chat_request):
-    """Send a chat request to the LLM API and return the response.
-    Args:
-        chat_request (dict): The request payload for the LLM API.
-    Returns:
-        httpx.Response: The HTTP response from the API.
-    """
-    async with httpx.AsyncClient() as client:
-        return await client.post(API_URL, json=chat_request, timeout=90)
-
-# Build the initial JSON object for the chat request
-messages = [{"role": "system", "content": load_prompt()}]
-chat_request = {
-    "model": LLM_MODEL,
-    "messages": messages
-}
-
-def remove_nonstandard(text):
-    """Remove all characters except letters, numbers, and normal punctuation (. , ! ? ; ,), 
-    and replace pirate 'Arr' or 'Arrr...' (standalone, case-insensitive) with 'Are'."""
-    # Replace standalone 'Arr', 'Arrr', etc. (case-insensitive, not part of another word) with 'Are'
-    text = re.sub(r'\b[Aa]rr*\b', 'Are', text)
-    # Only keep letters, numbers, space, and . , ! ? ; ,
-    return re.sub(r"[^a-zA-Z0-9\s\.,!\?;:]", "", text)
-
 # Thinking and waiting phrases
 THINKING_PHRASES = [
     "Hmm, let me think on that!",
@@ -104,6 +57,101 @@ WAITING_PHRASES = [
     "Patience, the seas be rough today!",
     "Keep yer hat on, I'm nearly done!"
 ]
+
+def load_prompt():
+    """Load the pirate prompt from a file specified by PROMPT_FILE env var or an error if the file is not found.
+    Returns:
+        str: The prompt text.
+    """
+    prompt_file = os.getenv("PROMPT_FILE", "prompt.txt")
+    if not os.path.isfile(prompt_file):
+        print(f"Error: Prompt file '{prompt_file}' not found.")
+        sys.exit(1)
+    with open(prompt_file, 'r', encoding='utf-8') as f:
+        return f.read().strip()
+
+def speak_text(text):
+    """Speak the given text using Coqui TTS and play the output audio file."""
+    output_path = "tts_output.wav"
+    tts_engine.tts_to_file(text=text, file_path=output_path)
+    # Play the audio file (macOS: afplay, Linux: aplay)
+    if sys.platform == "darwin":
+        subprocess.run(["afplay", output_path])
+    else:
+        subprocess.run(["aplay", output_path])
+
+def format_mistral_prompt(messages):
+    prompt = ""
+    first = True
+    system_prefix = ""
+
+    i = 0
+    while i < len(messages):
+        msg = messages[i]
+
+        # First message can include system and user setup
+        if first and msg["role"] == "system":
+            system_prefix = msg["content"].strip()
+            i += 1
+            continue
+
+        if msg["role"] == "user":
+            user_input = msg["content"].strip()
+            if first:
+                # Start with BOS token for the first block
+                prompt += f"<s>[INST] {system_prefix} {user_input} [/INST]"
+                first = False
+            else:
+                prompt += f"\n[INST] {user_input} [/INST]"
+        elif msg["role"] == "assistant":
+            prompt += f"{msg['content'].strip()}"
+        i += 1
+
+    return prompt
+
+
+async def send_request(chat_request):
+    """Send a chat request to the LLM API and return the response.
+    Args:
+        chat_request (dict): The request payload for the LLM API.
+    Returns:
+        httpx.Response: The HTTP response from the API.
+    """
+    if LLM_MODEL.startswith("ai/mistral"):
+        # Format the prompt for Mistral models
+        mistral_messages = format_mistral_prompt(chat_request["messages"])
+
+        chat_request = {
+            "model": LLM_MODEL,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": mistral_messages
+                }
+            ],
+        }
+        
+
+    print("Sending request to LLM API:", json.dumps(chat_request, indent=2))
+    async with httpx.AsyncClient() as client:
+        return await client.post(API_URL, json=chat_request, timeout=90)
+
+# Build the initial JSON object for the chat request
+messages = [{"role": "system", "content": load_prompt()}]
+
+chat_request = {
+    "model": LLM_MODEL,
+    "messages": messages
+}
+
+def remove_nonstandard(text):
+    """Remove all characters except letters, numbers, and normal punctuation (. , ! ? ; ,), 
+    and replace pirate 'Arr' or 'Arrr...' (standalone, case-insensitive) with 'Are'."""
+    # Replace standalone 'Arr', 'Arrr', etc. (case-insensitive, not part of another word) with 'Are'
+    text = re.sub(r'\b[Aa]rr*\b', 'Are', text)
+    # Only keep letters, numbers, space, and . , ! ? ; ,
+    return re.sub(r"[^a-zA-Z0-9\s\.,!\?;:]", "", text)
+
 
 async def main():
     """Main event loop for the Mr. Bones assistant.
