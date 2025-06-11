@@ -17,18 +17,6 @@ DEVICE = os.getenv("MIC_DEVICE", "default")
 
 q = queue.Queue()
 
-def build_mistral_prompt(user_messages, system_prompt=DEFAULT_SYSTEM_PROMPT):
-    """
-    Builds a single prompt string in [INST]...[/INST] format from a list of user/assistant messages.
-    Assumes first user message includes the system prompt.
-    """
-    prompt = f"<s>[INST] {system_prompt.strip()} {user_messages[0]['content'].strip()} [/INST]"
-    for i in range(1, len(user_messages), 2):
-        assistant = user_messages[i]['content'].strip() if i < len(user_messages) else ""
-        user = user_messages[i+1]['content'].strip() if (i+1) < len(user_messages) else ""
-        prompt += f"{assistant}\n[INST] {user} [/INST]"
-    return prompt
-
 def callback(indata, frames, time, status):
     """Callback function for sounddevice audio input.
     Args:

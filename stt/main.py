@@ -10,6 +10,7 @@ import json
 import dotenv
 import re
 import random
+import base64
 
 """Main script for Mr. Bones, the pirate voice assistant.
 Handles speech-to-text, prompt loading, LLM API requests, and text-to-speech output.
@@ -102,7 +103,7 @@ async def send_request(chat_request):
     Returns:
         httpx.Response: The HTTP response from the API.
     """
-    if LLM_MODEL.startswith("ai/mistral"):
+    if LLM_MODEL and LLM_MODEL.startswith("ai/mistral"):
         # Format the prompt for Mistral models
         mistral_messages = format_mistral_prompt(chat_request["messages"])
 
@@ -166,6 +167,7 @@ async def main():
         while not request_task.done():
             await asyncio.sleep(1)
             wait_time += 1
+            print(f"Waiting for response... {wait_time} seconds elapsed")
             # Every WAIT_INTERVAL seconds, play a waiting phrase (optional, can be removed)
             # if wait_time % WAIT_INTERVAL == 0:
             #     speak_text(random.choice(WAITING_PHRASES))
@@ -184,13 +186,13 @@ async def main():
                     audio_bytes = base64.b64decode(response_data["audio_base64"])
                     with open("tts_output.wav", "wb") as f:
                         f.write(audio_bytes)
-                    # Play the audio file (macOS: afplay, Linux: aplay, Windows: powershell)
-                    if sys.platform == "darwin":
-                        subprocess.run(["afplay", "tts_output.wav"])
-                    elif sys.platform.startswith("win"):
-                        subprocess.run(["powershell", "-c", "(New-Object Media.SoundPlayer 'tts_output.wav').PlaySync();"])
-                    else:
-                        subprocess.run(["aplay", "tts_output.wav"])
+                        f.flush()
+                        os.fsync(f.fileno())
+                    print("Audio file tts_output.wav written and flushed.")
+                    subprocess.run(["afplay", "tts_output.wav"])
+                else:
+                    print("No audio response in API data, using text response.")
+           
                 messages.append({
                     "role": "assistant",
                     "content": clean_response
