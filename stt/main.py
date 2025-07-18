@@ -32,7 +32,7 @@ def validate_environment():
     Exits with error message if validation fails.
     """
     errors = []
-    
+    print("⬜ Environment validation starting")
     # Required variables
     required_vars = {
         "API_URL": "URL of your LLM API backend",
