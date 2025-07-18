@@ -19,7 +19,6 @@ signal.signal(signal.SIGTERM, handle_shutdown)
 
 app = Flask(__name__)
 
-# Initialize Coqui TTS model (load once)
 use_gpu = torch.cuda.is_available()
 
 tts_engine = TTS(model_name="tts_models/en/ljspeech/tacotron2-DDC")
@@ -34,7 +33,7 @@ else:
 
 def get_llm_endpoint():
     """Returns the complete LLM API endpoint URL"""
-    base_url = os.getenv("LLM_BASE_URL", "")
+    base_url = os.getenv("LLM_BASE_URL", " http://model-runner.docker.internal/engines/v1")
     return f"{base_url}/chat/completions"
 
 @app.route('/')
