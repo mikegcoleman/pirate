@@ -1,0 +1,23 @@
+# Platform Configuration (Optional)
+PLATFORM=linux
+
+# API Configuration
+API_URL=http://localhost:8080/api/chat
+LLM_MODEL=llama3.1:8b-instruct-q4_K_M
+
+# Audio Configuration
+SPEECH_RATE=150
+AUDIO_PLAYER=aplay
+
+# Performance Settings
+TIMEOUT=60
+WAIT_INTERVAL=5
+
+# STT Configuration
+VOSK_MODEL_PATH=models/vosk-model-small-en-us-0.15
+SAMPLE_RATE=16000
+MIC_DEVICE=default
+BLOCKSIZE=4000
+
+# Prompt Configuration
+PROMPT_FILE=prompt.txt 

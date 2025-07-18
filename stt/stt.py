@@ -3,6 +3,8 @@ import queue
 import sounddevice as sd
 import vosk
 import dotenv
+import json
+import platform
 
 """Speech-to-text module for Mr. Bones, the pirate voice assistant.
 Handles audio input, Vosk model loading, and transcription.
@@ -12,8 +14,10 @@ MODEL_PATH = os.path.abspath(os.getenv("VOSK_MODEL_PATH", "models/vosk-model-sma
 
 print(f"Using Vosk model at: {MODEL_PATH}")
 
-SAMPLE_RATE = int(os.getenv("SAMPLE_RATE", 16000))
+# Audio Configuration
+SAMPLE_RATE = int(os.getenv("SAMPLE_RATE", "16000"))
 DEVICE = os.getenv("MIC_DEVICE", "default")
+BLOCKSIZE = int(os.getenv("BLOCKSIZE", "8000"))
 
 q = queue.Queue()
 
@@ -29,10 +33,45 @@ def callback(indata, frames, time, status):
         print("Audio callback status:", status)
     q.put(bytes(indata))
 
+def should_process_transcription(text, confidence=None):
+    """Validate transcription quality before processing.
+    
+    Args:
+        text (str): The transcribed text
+        confidence (float, optional): Confidence score from STT
+        
+    Returns:
+        bool: True if transcription should be processed, False otherwise
+    """
+    # Check for empty or whitespace-only text
+    if not text or text.strip() == "":
+        print("Empty transcription received")
+        return False
+    
+    # Check for common non-speech sounds
+    if text.strip().lower().strip('.,!?;:') == "huh":
+        print("Heard only 'huh', ignoring")
+        return False
+    
+    # Check confidence threshold if available
+    if confidence is not None:
+        CONFIDENCE_THRESHOLD = 0.7
+        if confidence < CONFIDENCE_THRESHOLD:
+            print(f"Low confidence transcription ({confidence:.2f}), ignoring")
+            return False
+    
+    # Check for very short transcriptions (likely noise)
+    if len(text.strip()) < 2:
+        print("Very short transcription, likely noise")
+        return False
+    
+    return True
+
 def transcribe():
     """Transcribe audio from the microphone using the Vosk model.
     Returns:
-        str: The recognized text from speech.
+        tuple: (text, confidence) where text is the recognized speech and confidence is the confidence score.
+               Returns (None, None) if no valid transcription is found.
     Raises:
         FileNotFoundError: If the Vosk model path does not exist.
     """
@@ -43,12 +82,23 @@ def transcribe():
 
     print("Listening... Press Ctrl+C to stop.")
 
-    with sd.RawInputStream(samplerate=SAMPLE_RATE, blocksize=8000, dtype='int16',
+    with sd.RawInputStream(samplerate=SAMPLE_RATE, blocksize=BLOCKSIZE, dtype='int16',
                            channels=1, callback=callback, device=DEVICE):
         while True:
             data = q.get()
             if recognizer.AcceptWaveform(data):
                 result = recognizer.Result()
-                text = eval(result).get("text", "")
+                result_dict = json.loads(result)
+                
+                text = result_dict.get("text", "")
+                # Vosk doesn't provide confidence scores in the standard output
+                # We'll use None for confidence and rely on other validation methods
+                confidence = None
+                
                 if text:
-                    return text
+                    # Validate the transcription
+                    if should_process_transcription(text, confidence):
+                        return text, confidence
+                    else:
+                        # Continue listening for better input
+                        continue
