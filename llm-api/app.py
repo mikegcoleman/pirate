@@ -4,7 +4,7 @@ import requests
 from flask import Flask, request, jsonify, send_file
 import signal
 import sys
-from TTS.api import TTS
+from kokoro import KPipeline
 import tempfile
 import base64
 import torch
@@ -21,15 +21,22 @@ app = Flask(__name__)
 
 use_gpu = torch.cuda.is_available()
 
-tts_engine = TTS(model_name="tts_models/en/ljspeech/tacotron2-DDC")
+# Initialize Kokoro TTS
+# Kokoro requires specific model files, not just directories
+model_path = os.getenv("KOKORO_MODEL_PATH", "./models/kokoro/model.onnx")
+voices_path = os.getenv("KOKORO_VOICES_PATH", "./models/kokoro/voices-v1.0.bin")
+
+# Create models directory if it doesn't exist
+os.makedirs(os.path.dirname(model_path), exist_ok=True)
+
+# Let Kokoro handle model downloading if files don't exist
+tts_engine = KPipeline(lang_code='a')  # 'a' for American English
+
+# Kokoro handles GPU/CPU automatically based on ONNX Runtime
 if use_gpu:
-    try:
-        tts_engine.to("cuda")
-    except RuntimeError as e:
-        print("⚠️ Could not use GPU for TTS, falling back to CPU:", e)
-        tts_engine.to("cpu")
+    print("✅ GPU available - Kokoro will use GPU acceleration if supported")
 else:
-    tts_engine.to("cpu")
+    print("✅ Using CPU for Kokoro TTS")
 
 def get_llm_endpoint():
     """Returns the complete LLM API endpoint URL"""
@@ -39,6 +46,22 @@ def get_llm_endpoint():
 @app.route('/')
 def index():
     return "Welcome to the pirate LLM chat API! Use /api/chat to interact with the model.", 200
+
+@app.route('/health')
+def health_check():
+    """Health check endpoint for monitoring"""
+    try:
+        # Basic health check - just return success
+        return jsonify({
+            'status': 'healthy',
+            'service': 'pirate-api',
+            'timestamp': '2024-01-01T00:00:00Z'  # You could add real timestamp if needed
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'status': 'unhealthy',
+            'error': str(e)
+        }), 500
 
 @app.route('/api/chat', methods=['POST'])
 def chat_api():
@@ -71,7 +94,17 @@ def chat_api():
             # Generate TTS audio for the response
             try:
                 with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_audio:
-                    tts_engine.tts_to_file(text=response_text, file_path=tmp_audio.name)
+                    # Use the correct Kokoro API
+                    generator = tts_engine(response_text, voice='af_heart')
+                    audio_data = None
+                    for i, (gs, ps, audio) in enumerate(generator):
+                        audio_data = audio
+                        break  # Take the first audio chunk
+                    
+                    if audio_data is None:
+                        raise Exception("No audio generated")
+                    
+                    tmp_audio.write(audio_data)
                     tmp_audio.seek(0)
                     audio_bytes = tmp_audio.read()
                     audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
@@ -164,11 +197,11 @@ def validate_api_environment():
     
     # Check TTS model
     try:
-        # Test TTS model loading
-        test_tts = TTS(model_name="tts_models/en/ljspeech/tacotron2-DDC")
-        print("✅ TTS model loaded successfully")
+        # Test Kokoro TTS loading
+        test_tts = KPipeline(lang_code='a')
+        print("✅ Kokoro TTS loaded successfully")
     except Exception as e:
-        errors.append(f"TTS model loading failed: {e}")
+        errors.append(f"Kokoro TTS loading failed: {e}")
     
     # Check CUDA availability
     if torch.cuda.is_available():

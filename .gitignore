@@ -42,3 +42,11 @@ htmlcov/
 *.iml
 models
 **/*.wav
+
+# TTS Models - exclude model files but keep directory structure
+llm-api/tts_models/*
+!llm-api/tts_models/.gitkeep
+
+# Kokoro Models - exclude model files but keep directory structure
+llm-api/models/*
+!llm-api/models/.gitkeep

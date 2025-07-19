@@ -20,10 +20,10 @@ pirate/
 │   ├── pi_env            # Raspberry Pi configuration
 │   └── PLATFORM_CONFIG.md # Platform configuration guide
 ├── llm-api/               # Backend API
-│   ├── app.py            # Flask API server
-│   ├── requirements.txt  # Python dependencies (pinned versions)
-│   ├── Dockerfile        # Container configuration (fixed port)
-│   ├── compose.yaml      # Docker compose setup
+│   ├── app.py            # Flask API server with Kokoro TTS
+│   ├── requirements.txt  # Python dependencies (kokoro-onnx, torch)
+│   ├── Dockerfile        # Container configuration
+│   ├── compose.yaml      # Docker compose setup (simplified)
 │   ├── env.example       # Environment template
 │   └── README.md         # Comprehensive documentation
 └── PROJECT_CONTEXT.md    # This file
@@ -61,6 +61,12 @@ pirate/
 - File and tool availability checks
 - **Status**: ✅ Implemented
 
+### 6. TTS Integration (Kokoro)
+- Character-focused TTS engine
+- Automatic model downloading
+- GPU/CPU acceleration support
+- **Status**: ✅ Implemented
+
 ## Platform Support
 
 ### macOS (Development)
@@ -86,7 +92,7 @@ pirate/
 ### Required
 ```bash
 API_URL=http://localhost:8080/api/chat
-LLM_MODEL=llama3.1:8b-instruct-q4_K_M
+LLM_MODEL=llama3.2:8b-instruct-q4_K_M
 ```
 
 ### Audio Configuration
@@ -141,12 +147,12 @@ BLOCKSIZE=8000          # 4000 for Pi, 8000 for Mac/Windows
 - ✅ Request validation
 - ✅ Response validation
 - ✅ Startup validation
-- ✅ TTS integration
+- ✅ Kokoro TTS integration
 - ✅ Health check endpoint
 - ✅ Comprehensive documentation
 - ✅ Environment template
-- ✅ Pinned dependency versions
-- ✅ Fixed Docker configuration
+- ✅ Simplified Docker configuration
+- ✅ Automatic TTS model downloading
 
 ## Development Workflow
 
@@ -167,7 +173,8 @@ BLOCKSIZE=8000          # 4000 for Pi, 8000 for Mac/Windows
 ## LLM Recommendations
 
 ### For RTX 5070 (12GB VRAM):
-- **Llama 3.1 8B** - Best overall performance
+- **Llama 3.2 8B** - Current choice, good character consistency
+- **Llama 3.3 8B** - Best character consistency (future upgrade)
 - **Mistral 7B v0.2** - Good alternative
 - **Phi-3.5 3.8B** - Most efficient
 
@@ -213,4 +220,25 @@ Mr. Bones is a friendly pirate who:
 - Consider using `espeak` for TTS feedback
 - Test with different microphone devices
 - Ensure Vosk model is properly installed
-- Check firewall settings for API communication 
+- Check firewall settings for API communication
+
+## Production Environment Details
+
+### API Server (Windows)
+- **Hardware**: AMD 9800X3D, 64GB RAM, RTX 5070
+- **Network**: High-speed internet available
+- **Role**: All heavy processing (LLM, TTS) runs here
+- **Deployment**: Containerized with Docker
+
+### Frontend (Raspberry Pi)
+- **Hardware**: Raspberry Pi 4 (limited resources)
+- **Network**: Connected to API server
+- **Role**: Audio capture, playback, and user interaction
+- **Deployment**: Native Python application
+
+### TTS Voice Character Challenge
+- **Current Status**: Using Kokoro TTS (good English voice quality)
+- **Kokoro**: Character-focused TTS, good voice quality but not classic pirate
+- **Goal**: Find or create authentic pirate voice for Mr. Bones
+- **Options**: Voice cloning, custom training, or specialized TTS models
+- **Next Steps**: Consider local voice cloning (RVC/Coqui) for authentic pirate voice 
