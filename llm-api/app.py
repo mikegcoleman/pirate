@@ -30,7 +30,7 @@ voices_path = os.getenv("KOKORO_VOICES_PATH", "./models/kokoro/voices-v1.0.bin")
 os.makedirs(os.path.dirname(model_path), exist_ok=True)
 
 # Let Kokoro handle model downloading if files don't exist
-tts_engine = KPipeline(lang_code='a')  # 'a' for American English
+tts_engine = KPipeline(lang_code='a', device='cpu', repo_id='hexgrad/Kokoro-82M')
 
 # Kokoro handles GPU/CPU automatically based on ONNX Runtime
 if use_gpu:
@@ -96,15 +96,28 @@ def chat_api():
                 with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_audio:
                     # Use the correct Kokoro API
                     generator = tts_engine(response_text, voice='af_heart')
-                    audio_data = None
+                    audio_tensor = None
                     for i, (gs, ps, audio) in enumerate(generator):
-                        audio_data = audio
+                        audio_tensor = audio
                         break  # Take the first audio chunk
                     
-                    if audio_data is None:
+                    if audio_tensor is None:
                         raise Exception("No audio generated")
                     
-                    tmp_audio.write(audio_data)
+                    # Convert tensor to numpy array and then to WAV format
+                    import soundfile as sf
+                    import numpy as np
+                    
+                    # Convert tensor to numpy if needed
+                    if hasattr(audio_tensor, 'cpu'):
+                        audio_np = audio_tensor.cpu().numpy()
+                    else:
+                        audio_np = np.array(audio_tensor)
+                    
+                    # Write WAV file using soundfile
+                    sf.write(tmp_audio.name, audio_np, 24000)  # Kokoro uses 24kHz sample rate
+                    
+                    # Read the WAV file as bytes
                     tmp_audio.seek(0)
                     audio_bytes = tmp_audio.read()
                     audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
@@ -198,7 +211,7 @@ def validate_api_environment():
     # Check TTS model
     try:
         # Test Kokoro TTS loading
-        test_tts = KPipeline(lang_code='a')
+        test_tts = KPipeline(lang_code='a', device='cpu', repo_id='hexgrad/Kokoro-82M')
         print("✅ Kokoro TTS loaded successfully")
     except Exception as e:
         errors.append(f"Kokoro TTS loading failed: {e}")
