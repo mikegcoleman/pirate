@@ -1,13 +1,15 @@
 import os
 import json
 import requests
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, Response
 import signal
 import sys
 from kokoro import KPipeline
 import tempfile
 import base64
 import torch
+import re
+import uuid
     
 def handle_shutdown(signum, frame):
     print(f"🔌 Received signal {signum}, shutting down gracefully...")
@@ -62,6 +64,119 @@ def health_check():
             'status': 'unhealthy',
             'error': str(e)
         }), 500
+
+@app.route('/api/chat/stream', methods=['POST'])
+def chat_stream_api():
+    """Processes streaming chat API requests with sentence-level TTS"""
+    try:
+        # Validate request
+        if not request.is_json:
+            return jsonify({'error': 'Content-Type must be application/json'}), 400
+        
+        chat_request = request.json
+        if not chat_request:
+            return jsonify({'error': 'No data received'}), 400
+        
+        # Validate required fields
+        if 'model' not in chat_request:
+            return jsonify({'error': 'Missing required field: model'}), 400
+        if 'messages' not in chat_request:
+            return jsonify({'error': 'Missing required field: messages'}), 400
+        
+        print(json.dumps(chat_request, indent=2))
+        
+        def generate_streaming_response():
+            """Generator function for streaming audio chunks"""
+            try:
+                # Set streaming flag for LLM API
+                chat_request['stream'] = True
+                
+                # Call streaming LLM API
+                accumulated_text = ""
+                sentence_buffer = ""
+                
+                for chunk_text in call_streaming_llm_api(chat_request):
+                    accumulated_text += chunk_text
+                    sentence_buffer += chunk_text
+                    
+                    # Check for sentence boundaries
+                    sentences = split_into_sentences(sentence_buffer)
+                    
+                    # Process complete sentences
+                    for sentence in sentences[:-1]:  # All but the last (incomplete) sentence
+                        if sentence.strip():
+                            try:
+                                audio_b64 = generate_sentence_audio(sentence.strip())
+                                chunk_data = {
+                                    'type': 'audio_chunk',
+                                    'sentence': sentence.strip(),
+                                    'audio_base64': audio_b64,
+                                    'chunk_id': str(uuid.uuid4())
+                                }
+                                yield f"data: {json.dumps(chunk_data)}\n\n"
+                            except Exception as tts_error:
+                                app.logger.error(f"TTS error for sentence: {tts_error}")
+                                # Send text-only chunk if TTS fails
+                                chunk_data = {
+                                    'type': 'text_chunk',
+                                    'sentence': sentence.strip(),
+                                    'error': 'TTS generation failed',
+                                    'chunk_id': str(uuid.uuid4())
+                                }
+                                yield f"data: {json.dumps(chunk_data)}\n\n"
+                    
+                    # Keep the incomplete sentence in buffer
+                    sentence_buffer = sentences[-1] if sentences else ""
+                
+                # Process any remaining text
+                if sentence_buffer.strip():
+                    try:
+                        audio_b64 = generate_sentence_audio(sentence_buffer.strip())
+                        chunk_data = {
+                            'type': 'audio_chunk',
+                            'sentence': sentence_buffer.strip(),
+                            'audio_base64': audio_b64,
+                            'chunk_id': str(uuid.uuid4())
+                        }
+                        yield f"data: {json.dumps(chunk_data)}\n\n"
+                    except Exception as tts_error:
+                        app.logger.error(f"TTS error for final sentence: {tts_error}")
+                        chunk_data = {
+                            'type': 'text_chunk',
+                            'sentence': sentence_buffer.strip(),
+                            'error': 'TTS generation failed',
+                            'chunk_id': str(uuid.uuid4())
+                        }
+                        yield f"data: {json.dumps(chunk_data)}\n\n"
+                
+                # Send completion signal
+                completion_data = {
+                    'type': 'complete',
+                    'full_response': accumulated_text
+                }
+                yield f"data: {json.dumps(completion_data)}\n\n"
+                
+            except Exception as e:
+                app.logger.error(f"Streaming error: {e}")
+                error_data = {
+                    'type': 'error',
+                    'error': str(e)
+                }
+                yield f"data: {json.dumps(error_data)}\n\n"
+        
+        return Response(
+            generate_streaming_response(),
+            mimetype='text/event-stream',
+            headers={
+                'Cache-Control': 'no-cache',
+                'Connection': 'keep-alive',
+                'Access-Control-Allow-Origin': '*'
+            }
+        )
+        
+    except Exception as e:
+        app.logger.error(f"Unexpected error in chat_stream_api: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
 
 @app.route('/api/chat', methods=['POST'])
 def chat_api():
@@ -198,6 +313,97 @@ def call_llm_api(chat_request):
         raise Exception("Empty content in LLM API response")
     
     return content.strip()
+
+def call_streaming_llm_api(chat_request):
+    """Calls the LLM API with streaming and yields response chunks"""
+    headers = {"Content-Type": "application/json"}
+    
+    # Validate LLM endpoint
+    llm_endpoint = get_llm_endpoint()
+    if not llm_endpoint:
+        raise Exception("LLM_BASE_URL environment variable is not set")
+    
+    # Send streaming request to LLM API
+    response = requests.post(
+        llm_endpoint,
+        headers=headers,
+        json=chat_request,
+        timeout=60,  # Longer timeout for streaming
+        stream=True
+    )
+    
+    # Check if the status code is not 200 OK
+    if response.status_code != 200:
+        raise requests.exceptions.HTTPError(f"API returned status code {response.status_code}: {response.text}")
+    
+    # Process streaming response
+    for line in response.iter_lines():
+        if line:
+            line_str = line.decode('utf-8')
+            if line_str.startswith('data: '):
+                data_str = line_str[6:]  # Remove 'data: ' prefix
+                if data_str.strip() == '[DONE]':
+                    break
+                
+                try:
+                    chunk_data = json.loads(data_str)
+                    if 'choices' in chunk_data and len(chunk_data['choices']) > 0:
+                        delta = chunk_data['choices'][0].get('delta', {})
+                        content = delta.get('content', '')
+                        if content:
+                            yield content
+                except json.JSONDecodeError:
+                    # Skip invalid JSON chunks
+                    continue
+
+def split_into_sentences(text):
+    """Split text into sentences using punctuation boundaries"""
+    # Simple sentence splitting - can be enhanced for better accuracy
+    sentence_endings = r'[.!?]+\s*'
+    sentences = re.split(f'({sentence_endings})', text)
+    
+    # Recombine sentences with their punctuation
+    result = []
+    for i in range(0, len(sentences), 2):
+        if i < len(sentences):
+            sentence = sentences[i]
+            if i + 1 < len(sentences):
+                sentence += sentences[i + 1]
+            if sentence.strip():
+                result.append(sentence)
+    
+    return result
+
+def generate_sentence_audio(sentence):
+    """Generate TTS audio for a single sentence and return base64 encoded WAV"""
+    with tempfile.NamedTemporaryFile(suffix='.wav', delete=True) as tmp_audio:
+        # Use Kokoro TTS for the sentence
+        generator = tts_engine(sentence, voice='af_heart')
+        audio_tensor = None
+        for i, (gs, ps, audio) in enumerate(generator):
+            audio_tensor = audio
+            break  # Take the first audio chunk
+        
+        if audio_tensor is None:
+            raise Exception("No audio generated for sentence")
+        
+        # Convert tensor to numpy array and save as WAV
+        import soundfile as sf
+        import numpy as np
+        
+        # Convert tensor to numpy if needed
+        if hasattr(audio_tensor, 'cpu'):
+            audio_np = audio_tensor.cpu().numpy()
+        else:
+            audio_np = np.array(audio_tensor)
+        
+        # Write WAV file using soundfile
+        sf.write(tmp_audio.name, audio_np, 24000)  # Kokoro uses 24kHz sample rate
+        
+        # Read the WAV file as bytes and encode as base64
+        with open(tmp_audio.name, 'rb') as f:
+            audio_bytes = f.read()
+            return base64.b64encode(audio_bytes).decode('utf-8')
 
 def validate_api_environment():
     """Validate API environment variables and dependencies"""

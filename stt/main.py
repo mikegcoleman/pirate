@@ -13,6 +13,8 @@ import random
 import base64
 import tempfile
 import platform
+import queue
+import threading
 
 """Main script for Mr. Bones, the pirate voice assistant.
 Handles speech-to-text, prompt loading, LLM API requests, and text-to-speech output.
@@ -105,6 +107,8 @@ print(f"Speech Rate: {SPEECH_RATE}")
 print(f"Audio Player: {AUDIO_PLAYER}")
 print(f"Timeout: {TIMEOUT}s")
 print(f"Wait Interval: {WAIT_INTERVAL}s")
+print(f"API URL: {API_URL}")
+print(f"LLM Model: {LLM_MODEL}")
 
 # Thinking and waiting phrases
 THINKING_PHRASES = [
@@ -188,6 +192,36 @@ def format_mistral_prompt(messages):
     return prompt
 
 
+async def send_streaming_request(chat_request):
+    """Send a streaming chat request to the LLM API and yield audio chunks.
+    Args:
+        chat_request (dict): The request payload for the LLM API.
+    Yields:
+        dict: Audio chunk data containing sentence and audio_base64
+    """
+    # Use streaming endpoint
+    streaming_api_url = API_URL.replace('/api/chat', '/api/chat/stream')
+    
+    print("Sending streaming request to LLM API:", json.dumps(chat_request, indent=2))
+    
+    async with httpx.AsyncClient(timeout=120) as client:
+        async with client.stream(
+            'POST', 
+            streaming_api_url, 
+            json=chat_request,
+            headers={'Accept': 'text/event-stream'}
+        ) as response:
+            response.raise_for_status()
+            
+            async for line in response.aiter_lines():
+                if line.startswith('data: '):
+                    data_str = line[6:]  # Remove 'data: ' prefix
+                    try:
+                        chunk_data = json.loads(data_str)
+                        yield chunk_data
+                    except json.JSONDecodeError:
+                        continue
+
 async def send_request(chat_request):
     """Send a chat request to the LLM API and return the response.
     Args:
@@ -230,6 +264,97 @@ def remove_nonstandard(text):
     # Only keep letters, numbers, space, and . , ! ? ; ,
     return re.sub(r"[^a-zA-Z0-9\s\.,!\?;:]", "", text)
 
+def play_audio_chunk(audio_base64):
+    """Play a single audio chunk from base64 encoded WAV data."""
+    try:
+        audio_bytes = base64.b64decode(audio_base64)
+        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_file:
+            tmp_file.write(audio_bytes)
+            tmp_file.flush()
+            os.fsync(tmp_file.fileno())
+            
+        # Play the audio file
+        subprocess.run([AUDIO_PLAYER, tmp_file.name], check=True)
+        os.unlink(tmp_file.name)  # Clean up immediately
+    except Exception as e:
+        print(f"Error playing audio chunk: {e}")
+
+async def handle_streaming_response(chat_request):
+    """Handle streaming response with real-time audio playback."""
+    full_response = ""
+    audio_queue = queue.Queue()
+    audio_thread = None
+    
+    def audio_player_worker():
+        """Worker thread to play audio chunks sequentially."""
+        while True:
+            try:
+                audio_data = audio_queue.get(timeout=30)  # 30 second timeout
+                if audio_data is None:  # Sentinel value to stop
+                    break
+                play_audio_chunk(audio_data)
+                audio_queue.task_done()
+            except queue.Empty:
+                break
+            except Exception as e:
+                print(f"Audio worker error: {e}")
+    
+    try:
+        # Start audio worker thread
+        audio_thread = threading.Thread(target=audio_player_worker, daemon=True)
+        audio_thread.start()
+        
+        async for chunk in send_streaming_request(chat_request):
+            if chunk['type'] == 'audio_chunk':
+                sentence = chunk['sentence']
+                print(f"Playing: {sentence}")
+                full_response += sentence + " "
+                
+                # Queue audio for playback
+                audio_queue.put(chunk['audio_base64'])
+                
+            elif chunk['type'] == 'text_chunk':
+                # Fallback for failed TTS
+                sentence = chunk['sentence']
+                print(f"Text only: {sentence}")
+                full_response += sentence + " "
+                speak_text(sentence)  # Use system TTS as fallback
+                
+            elif chunk['type'] == 'complete':
+                print("Streaming complete")
+                break
+                
+            elif chunk['type'] == 'error':
+                print(f"Streaming error: {chunk['error']}")
+                break
+        
+        # Signal audio worker to stop and wait for it to finish
+        audio_queue.put(None)
+        if audio_thread and audio_thread.is_alive():
+            audio_thread.join(timeout=10)
+        
+        return full_response.strip()
+        
+    except Exception as e:
+        print(f"Streaming error: {e}")
+        # Fallback to non-streaming request
+        print("Falling back to non-streaming API...")
+        response = await send_request(chat_request)
+        response.raise_for_status()
+        response_data = response.json()
+        
+        if "error" in response_data:
+            print("Error from fallback API:", response_data["error"])
+            return None
+        else:
+            # Handle fallback response
+            clean_response = remove_nonstandard(response_data["response"])
+            if "audio_base64" in response_data:
+                play_audio_chunk(response_data["audio_base64"])
+            else:
+                speak_text(clean_response)
+            return clean_response
+
 
 async def main():
     """Main event loop for the Mr. Bones assistant.
@@ -259,50 +384,28 @@ async def main():
             # Play a random thinking phrase immediately (optional, can be removed)
             # speak_text(random.choice(THINKING_PHRASES))
 
-            # Build chat history and send to API
+            # Build chat history and send to streaming API
             messages.append({"role": "user", "content": text})
             chat_request = {
                 "model": LLM_MODEL,
                 "messages": messages
             }
-            request_task = asyncio.create_task(send_request(chat_request))
-
-            wait_time = 0
-            while not request_task.done():
-                await asyncio.sleep(1)
-                wait_time += 1
-                print(f"Waiting for response... {wait_time} seconds elapsed")
-                # Every WAIT_INTERVAL seconds, play a waiting phrase (optional, can be removed)
-                # if wait_time % WAIT_INTERVAL == 0:
-                #     speak_text(random.choice(WAITING_PHRASES))
-
+            
             try:
-                response = await request_task
-                response.raise_for_status()
-                response_data = response.json()
-                if "error" in response_data:
-                    print("Error from API:", response_data["error"])
-                else:
-                    clean_response = remove_nonstandard(response_data["response"])
-                    print("Response:", clean_response)
-                    # Play the audio response from API
-                    if "audio_base64" in response_data:
-                        audio_bytes = base64.b64decode(response_data["audio_base64"])
-                        # Use temporary file for better management
-                        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_file:
-                            tmp_file.write(audio_bytes)
-                            tmp_file.flush()
-                            os.fsync(tmp_file.fileno())
-                            print(f"Audio file {tmp_file.name} written and flushed.")
-                            subprocess.run([AUDIO_PLAYER, tmp_file.name])
-                            os.unlink(tmp_file.name)  # Clean up immediately
-                    else:
-                        print("No audio response in API data, using text response.")
-               
+                # Use streaming response handler
+                clean_response = await handle_streaming_response(chat_request)
+                
+                if clean_response:
+                    clean_response = remove_nonstandard(clean_response)
+                    print("Final Response:", clean_response)
+                    
                     messages.append({
-                        "role": "assistant",
+                        "role": "assistant", 
                         "content": clean_response
                     })
+                else:
+                    print("No response received")
+                    
             except Exception as e:
                 print("Error:", str(e))
 
