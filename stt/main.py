@@ -265,17 +265,13 @@ def remove_nonstandard(text):
     return re.sub(r"[^a-zA-Z0-9\s\.,!\?;:]", "", text)
 
 def play_audio_chunk(audio_base64):
-    """Play a single audio chunk from base64 encoded WAV data."""
+    """Play a single audio chunk from base64 encoded WAV data (fallback function)."""
     try:
         audio_bytes = base64.b64decode(audio_base64)
-        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_file:
+        with tempfile.NamedTemporaryFile(suffix='.wav', delete=True) as tmp_file:
             tmp_file.write(audio_bytes)
             tmp_file.flush()
-            os.fsync(tmp_file.fileno())
-            
-        # Play the audio file
-        subprocess.run([AUDIO_PLAYER, tmp_file.name], check=True)
-        os.unlink(tmp_file.name)  # Clean up immediately
+            subprocess.run([AUDIO_PLAYER, tmp_file.name], check=True)
     except Exception as e:
         print(f"Error playing audio chunk: {e}")
 
@@ -284,34 +280,69 @@ async def handle_streaming_response(chat_request):
     full_response = ""
     audio_queue = queue.Queue()
     audio_thread = None
+    audio_chunks_queued = 0
+    audio_chunks_played = 0
+    audio_lock = threading.Lock()
     
     def audio_player_worker():
-        """Worker thread to play audio chunks sequentially."""
+        """Worker thread to play audio chunks sequentially with minimal delay."""
+        nonlocal audio_chunks_played
+        
         while True:
             try:
-                audio_data = audio_queue.get(timeout=30)  # 30 second timeout
+                audio_data = audio_queue.get(timeout=120)
                 if audio_data is None:  # Sentinel value to stop
+                    audio_queue.task_done()
                     break
-                play_audio_chunk(audio_data)
+                    
+                # Play audio chunk and wait for completion (sequential)
+                audio_bytes = base64.b64decode(audio_data)
+                with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_file:
+                    tmp_file.write(audio_bytes)
+                    tmp_file.flush()
+                    
+                    # Play and wait for completion to maintain sequence
+                    process = subprocess.Popen([AUDIO_PLAYER, tmp_file.name])
+                    process.wait()  # Wait for this sentence to finish
+                    
+                    # Clean up immediately
+                    try:
+                        os.unlink(tmp_file.name)
+                    except:
+                        pass
+                
+                with audio_lock:
+                    audio_chunks_played += 1
+                    print(f"Audio progress: {audio_chunks_played}/{audio_chunks_queued} chunks played")
                 audio_queue.task_done()
+                
             except queue.Empty:
+                print("Audio worker timed out waiting for chunks")
                 break
             except Exception as e:
                 print(f"Audio worker error: {e}")
+                audio_queue.task_done()
     
     try:
         # Start audio worker thread
-        audio_thread = threading.Thread(target=audio_player_worker, daemon=True)
+        audio_thread = threading.Thread(target=audio_player_worker, daemon=False)  # Not daemon so it completes
         audio_thread.start()
         
         async for chunk in send_streaming_request(chat_request):
-            if chunk['type'] == 'audio_chunk':
+            if chunk['type'] == 'text_preview':
+                # Show text immediately while TTS generates
                 sentence = chunk['sentence']
-                print(f"Playing: {sentence}")
+                print(f"Preview: {sentence}")
+                
+            elif chunk['type'] == 'audio_chunk':
+                sentence = chunk['sentence']
+                print(f"Audio ready: {sentence}")
                 full_response += sentence + " "
                 
                 # Queue audio for playback
                 audio_queue.put(chunk['audio_base64'])
+                with audio_lock:
+                    audio_chunks_queued += 1
                 
             elif chunk['type'] == 'text_chunk':
                 # Fallback for failed TTS
@@ -328,11 +359,20 @@ async def handle_streaming_response(chat_request):
                 print(f"Streaming error: {chunk['error']}")
                 break
         
-        # Signal audio worker to stop and wait for it to finish
-        audio_queue.put(None)
-        if audio_thread and audio_thread.is_alive():
-            audio_thread.join(timeout=10)
+        print(f"Streaming finished. Waiting for {audio_chunks_queued} audio chunks to complete...")
         
+        # Signal audio worker to stop after processing all chunks
+        audio_queue.put(None)
+        
+        # Wait for all audio chunks to be processed
+        audio_queue.join()
+        
+        # Wait for audio thread to complete with longer timeout
+        if audio_thread and audio_thread.is_alive():
+            print("Waiting for audio playback to complete...")
+            audio_thread.join(timeout=60)  # Much longer timeout
+            
+        print("All audio playback completed")
         return full_response.strip()
         
     except Exception as e:

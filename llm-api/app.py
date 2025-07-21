@@ -23,16 +23,16 @@ app = Flask(__name__)
 
 use_gpu = torch.cuda.is_available()
 
-# Initialize Kokoro TTS
-# Kokoro requires specific model files, not just directories
+# Initialize Kokoro TTS with optimized settings
 model_path = os.getenv("KOKORO_MODEL_PATH", "./models/kokoro/model.onnx")
 voices_path = os.getenv("KOKORO_VOICES_PATH", "./models/kokoro/voices-v1.0.bin")
 
 # Create models directory if it doesn't exist
 os.makedirs(os.path.dirname(model_path), exist_ok=True)
 
-# Let Kokoro handle model downloading if files don't exist
-tts_engine = KPipeline(lang_code='a', device='cpu', repo_id='hexgrad/Kokoro-82M')
+# Initialize with optimized device setting
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+tts_engine = KPipeline(lang_code='a', device=device, repo_id='hexgrad/Kokoro-82M')
 
 # Kokoro handles GPU/CPU automatically based on ONNX Runtime
 if use_gpu:
@@ -105,6 +105,15 @@ def chat_stream_api():
                     # Process complete sentences
                     for sentence in sentences[:-1]:  # All but the last (incomplete) sentence
                         if sentence.strip():
+                            # Send text immediately for faster display
+                            text_chunk_data = {
+                                'type': 'text_preview',
+                                'sentence': sentence.strip(),
+                                'chunk_id': str(uuid.uuid4())
+                            }
+                            yield f"data: {json.dumps(text_chunk_data)}\n\n"
+                            
+                            # Then generate and send audio
                             try:
                                 audio_b64 = generate_sentence_audio(sentence.strip())
                                 chunk_data = {
@@ -376,7 +385,10 @@ def split_into_sentences(text):
 
 def generate_sentence_audio(sentence):
     """Generate TTS audio for a single sentence and return base64 encoded WAV"""
-    with tempfile.NamedTemporaryFile(suffix='.wav', delete=True) as tmp_audio:
+    import time
+    start_time = time.time()
+    
+    try:
         # Use Kokoro TTS for the sentence
         generator = tts_engine(sentence, voice='af_heart')
         audio_tensor = None
@@ -387,9 +399,10 @@ def generate_sentence_audio(sentence):
         if audio_tensor is None:
             raise Exception("No audio generated for sentence")
         
-        # Convert tensor to numpy array and save as WAV
+        # Convert tensor to numpy array - avoid file I/O
         import soundfile as sf
         import numpy as np
+        import io
         
         # Convert tensor to numpy if needed
         if hasattr(audio_tensor, 'cpu'):
@@ -397,13 +410,21 @@ def generate_sentence_audio(sentence):
         else:
             audio_np = np.array(audio_tensor)
         
-        # Write WAV file using soundfile
-        sf.write(tmp_audio.name, audio_np, 24000)  # Kokoro uses 24kHz sample rate
+        # Write to memory buffer instead of temp file
+        buffer = io.BytesIO()
+        sf.write(buffer, audio_np, 24000, format='WAV')
+        buffer.seek(0)
+        audio_bytes = buffer.read()
         
-        # Read the WAV file as bytes and encode as base64
-        with open(tmp_audio.name, 'rb') as f:
-            audio_bytes = f.read()
-            return base64.b64encode(audio_bytes).decode('utf-8')
+        generation_time = time.time() - start_time
+        print(f"TTS generation time: {generation_time:.3f}s for sentence: {sentence[:50]}...")
+        
+        return base64.b64encode(audio_bytes).decode('utf-8')
+        
+    except Exception as e:
+        generation_time = time.time() - start_time
+        print(f"TTS generation failed after {generation_time:.3f}s: {e}")
+        raise
 
 def validate_api_environment():
     """Validate API environment variables and dependencies"""
