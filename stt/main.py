@@ -101,10 +101,12 @@ validate_environment()
 API_URL = os.getenv("API_URL")
 LLM_MODEL = os.getenv("LLM_MODEL")
 
-print(f"Speech Rate: {SPEECH_RATE}")
-print(f"Audio Player: {AUDIO_PLAYER}")
-print(f"Timeout: {TIMEOUT}s")
-print(f"Wait Interval: {WAIT_INTERVAL}s")
+print(f"🎤 Speech Rate: {SPEECH_RATE}")
+print(f"🔊 Audio Player: {AUDIO_PLAYER}")
+print(f"⏱️  Timeout: {TIMEOUT}s")
+print(f"⏳ Wait Interval: {WAIT_INTERVAL}s")
+print(f"🌐 API URL: {API_URL}")
+print(f"🤖 LLM Model: {LLM_MODEL}")
 
 # Thinking and waiting phrases
 THINKING_PHRASES = [
@@ -195,7 +197,14 @@ async def send_request(chat_request):
     Returns:
         httpx.Response: The HTTP response from the API.
     """
+    print(f"\n🌐 === API REQUEST ===")
+    print(f"📡 Endpoint: {API_URL}")
+    print(f"🤖 Model: {chat_request.get('model', 'unknown')}")
+    print(f"💬 Messages: {len(chat_request.get('messages', []))}")
+    print(f"⏱️  Timeout: {TIMEOUT}s")
+    
     if LLM_MODEL and LLM_MODEL.startswith("ai/mistral"):
+        print("🔄 Formatting for Mistral model...")
         # Format the prompt for Mistral models
         mistral_messages = format_mistral_prompt(chat_request["messages"])
 
@@ -208,11 +217,53 @@ async def send_request(chat_request):
                 }
             ],
         }
-        
+        print("✅ Mistral formatting complete")
 
-    print("Sending request to LLM API:", json.dumps(chat_request, indent=2))
-    async with httpx.AsyncClient() as client:
-        return await client.post(API_URL, json=chat_request, timeout=TIMEOUT)
+    print(f"📤 Request payload:")
+    print(json.dumps(chat_request, indent=2))
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            print("🔗 Establishing connection...")
+            response = await client.post(API_URL, json=chat_request, timeout=TIMEOUT)
+            
+            print(f"\n🌐 === API RESPONSE ===")
+            print(f"📊 Status: {response.status_code}")
+            print(f"📏 Content-Length: {len(response.content)} bytes")
+            print(f"🏷️  Content-Type: {response.headers.get('content-type', 'unknown')}")
+            
+            if response.status_code != 200:
+                print(f"❌ Error response body:")
+                print(response.text)
+            else:
+                print("✅ Response received successfully")
+                try:
+                    response_json = response.json()
+                    if "error" in response_json:
+                        print(f"❌ API Error: {response_json['error']}")
+                    elif "response" in response_json:
+                        print(f"💭 Response text: {response_json['response'][:100]}...")
+                        if "audio_base64" in response_json:
+                            print(f"🔊 Audio included: {len(response_json['audio_base64'])} chars")
+                        else:
+                            print("🔇 No audio in response")
+                    else:
+                        print(f"🔍 Response keys: {list(response_json.keys())}")
+                except Exception as parse_error:
+                    print(f"❌ Failed to parse JSON response: {parse_error}")
+                    print(f"📄 Raw response: {response.text[:200]}...")
+            
+            return response
+            
+    except httpx.TimeoutException:
+        print(f"⏰ Request timed out after {TIMEOUT} seconds")
+        raise
+    except httpx.ConnectError as e:
+        print(f"🔌 Connection failed: {e}")
+        raise
+    except Exception as e:
+        print(f"❌ Unexpected error: {e}")
+        raise
 
 # Build the initial JSON object for the chat request
 messages = [{"role": "system", "content": load_prompt()}]
