@@ -6,6 +6,9 @@ import dotenv
 import json
 import platform
 
+# Disable Vosk logging
+vosk.SetLogLevel(-1)
+
 """Speech-to-text module for Mr. Bones, the pirate voice assistant.
 Handles audio input, Vosk model loading, and transcription.
 """
