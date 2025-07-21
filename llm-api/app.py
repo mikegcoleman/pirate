@@ -4,10 +4,11 @@ import requests
 from flask import Flask, request, jsonify, send_file, Response
 import signal
 import sys
-from kokoro import KPipeline
+from piper import PiperVoice
 import tempfile
 import base64
 import torch
+import wave
 import re
 import uuid
     
@@ -23,22 +24,23 @@ app = Flask(__name__)
 
 use_gpu = torch.cuda.is_available()
 
-# Initialize Kokoro TTS with optimized settings
-model_path = os.getenv("KOKORO_MODEL_PATH", "./models/kokoro/model.onnx")
-voices_path = os.getenv("KOKORO_VOICES_PATH", "./models/kokoro/voices-v1.0.bin")
+# Initialize Piper TTS with optimized settings
+model_path = os.getenv("PIPER_MODEL_PATH", "./models/piper/en_US-lessac-medium.onnx")
+model_config_path = os.getenv("PIPER_CONFIG_PATH", "./models/piper/en_US-lessac-medium.onnx.json")
 
 # Create models directory if it doesn't exist
 os.makedirs(os.path.dirname(model_path), exist_ok=True)
 
-# Initialize with optimized device setting
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
-tts_engine = KPipeline(lang_code='a', device=device, repo_id='hexgrad/Kokoro-82M')
-
-# Kokoro handles GPU/CPU automatically based on ONNX Runtime
-if use_gpu:
-    print("✅ GPU available - Kokoro will use GPU acceleration if supported")
-else:
-    print("✅ Using CPU for Kokoro TTS")
+# Initialize Piper voice - will download model if needed
+tts_engine = None
+try:
+    tts_engine = PiperVoice.load(model_path, config_path=model_config_path, use_cuda=use_gpu)
+    print(f"✅ Piper TTS loaded successfully with {'GPU' if use_gpu else 'CPU'}")
+except Exception as e:
+    print(f"⚠️ Using fallback Piper model: {e}")
+    # Fallback to a basic model that Piper can auto-download
+    tts_engine = PiperVoice.load("en_US-lessac-medium", use_cuda=use_gpu)
+    print(f"✅ Piper TTS fallback loaded with {'GPU' if use_gpu else 'CPU'}")
 
 def get_llm_endpoint():
     """Returns the complete LLM API endpoint URL"""
@@ -218,33 +220,25 @@ def chat_api():
             # Generate TTS audio for the response
             try:
                 with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_audio:
-                    # Use the correct Kokoro API
-                    generator = tts_engine(response_text, voice='af_heart')
-                    audio_tensor = None
-                    for i, (gs, ps, audio) in enumerate(generator):
-                        audio_tensor = audio
-                        break  # Take the first audio chunk
+                    # Use Piper TTS API
+                    wav_bytes = bytes()
+                    for audio_chunk in tts_engine.synthesize(response_text):
+                        wav_bytes += audio_chunk
                     
-                    if audio_tensor is None:
+                    if not wav_bytes:
                         raise Exception("No audio generated")
                     
-                    # Convert tensor to numpy array and then to WAV format
-                    import soundfile as sf
-                    import numpy as np
+                    # Write WAV bytes directly to file
+                    tmp_audio.write(wav_bytes)
+                    tmp_audio.flush()
                     
-                    # Convert tensor to numpy if needed
-                    if hasattr(audio_tensor, 'cpu'):
-                        audio_np = audio_tensor.cpu().numpy()
-                    else:
-                        audio_np = np.array(audio_tensor)
-                    
-                    # Write WAV file using soundfile
-                    sf.write(tmp_audio.name, audio_np, 24000)  # Kokoro uses 24kHz sample rate
-                    
-                    # Read the WAV file as bytes
-                    tmp_audio.seek(0)
-                    audio_bytes = tmp_audio.read()
+                    # Read the WAV file as bytes for base64 encoding
+                    with open(tmp_audio.name, 'rb') as f:
+                        audio_bytes = f.read()
                     audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
+                    
+                    # Clean up temp file
+                    os.unlink(tmp_audio.name)
                 
                 return jsonify({
                     'response': response_text, 
@@ -389,37 +383,18 @@ def generate_sentence_audio(sentence):
     start_time = time.time()
     
     try:
-        # Use Kokoro TTS for the sentence
-        generator = tts_engine(sentence, voice='af_heart')
-        audio_tensor = None
-        for i, (gs, ps, audio) in enumerate(generator):
-            audio_tensor = audio
-            break  # Take the first audio chunk
+        # Use Piper TTS for the sentence
+        wav_bytes = bytes()
+        for audio_chunk in tts_engine.synthesize(sentence):
+            wav_bytes += audio_chunk
         
-        if audio_tensor is None:
+        if not wav_bytes:
             raise Exception("No audio generated for sentence")
-        
-        # Convert tensor to numpy array - avoid file I/O
-        import soundfile as sf
-        import numpy as np
-        import io
-        
-        # Convert tensor to numpy if needed
-        if hasattr(audio_tensor, 'cpu'):
-            audio_np = audio_tensor.cpu().numpy()
-        else:
-            audio_np = np.array(audio_tensor)
-        
-        # Write to memory buffer instead of temp file
-        buffer = io.BytesIO()
-        sf.write(buffer, audio_np, 24000, format='WAV')
-        buffer.seek(0)
-        audio_bytes = buffer.read()
         
         generation_time = time.time() - start_time
         print(f"TTS generation time: {generation_time:.3f}s for sentence: {sentence[:50]}...")
         
-        return base64.b64encode(audio_bytes).decode('utf-8')
+        return base64.b64encode(wav_bytes).decode('utf-8')
         
     except Exception as e:
         generation_time = time.time() - start_time
@@ -437,11 +412,11 @@ def validate_api_environment():
     
     # Check TTS model
     try:
-        # Test Kokoro TTS loading
-        test_tts = KPipeline(lang_code='a', device='cpu', repo_id='hexgrad/Kokoro-82M')
-        print("✅ Kokoro TTS loaded successfully")
+        # Test Piper TTS loading
+        test_tts = PiperVoice.load("en_US-lessac-medium", use_cuda=False)
+        print("✅ Piper TTS loaded successfully")
     except Exception as e:
-        errors.append(f"Kokoro TTS loading failed: {e}")
+        errors.append(f"Piper TTS loading failed: {e}")
     
     # Check CUDA availability
     if torch.cuda.is_available():
