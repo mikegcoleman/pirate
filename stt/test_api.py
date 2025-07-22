@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+p#!/usr/bin/env python3
 """
 Quick API test script for the pirate chat API
 Tests both regular and streaming endpoints
