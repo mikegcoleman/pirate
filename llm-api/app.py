@@ -4,10 +4,8 @@ import requests
 from flask import Flask, request, jsonify, send_file, Response
 import signal
 import sys
-from kokoro import KPipeline
 import tempfile
 import base64
-import torch
 import wave
 import re
 import uuid
@@ -16,8 +14,22 @@ import logging
 from datetime import datetime
 from abc import ABC, abstractmethod
 
-# Load environment variables from .env file
+# Load environment variables first to check TTS provider
 load_dotenv()
+
+# Conditional imports based on TTS provider
+tts_provider_name = os.getenv("TTS_PROVIDER", "kokoro").lower()
+if tts_provider_name == "kokoro":
+    try:
+        from kokoro import KPipeline
+        import torch
+        KOKORO_AVAILABLE = True
+    except ImportError:
+        KOKORO_AVAILABLE = False
+        print("⚠️  Kokoro TTS not available - install with: pip install kokoro")
+else:
+    KOKORO_AVAILABLE = False
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -33,7 +45,12 @@ signal.signal(signal.SIGTERM, handle_shutdown)
 
 app = Flask(__name__)
 
-use_gpu = torch.cuda.is_available()
+# GPU detection (only if torch is available)
+try:
+    import torch
+    use_gpu = torch.cuda.is_available()
+except ImportError:
+    use_gpu = False
 
 # TTS Provider Classes
 class TTSProvider(ABC):
@@ -48,6 +65,9 @@ class KokoroTTSProvider(TTSProvider):
     """Kokoro TTS Provider (local)"""
     
     def __init__(self):
+        if not KOKORO_AVAILABLE:
+            raise ImportError("Kokoro TTS not available. Install with: pip install kokoro")
+        
         model_path = os.getenv("KOKORO_MODEL_PATH", "./models/kokoro/model.onnx")
         voices_path = os.getenv("KOKORO_VOICES_PATH", "./models/kokoro/voices-v1.0.bin")
         
@@ -64,8 +84,11 @@ class KokoroTTSProvider(TTSProvider):
     
     def generate_audio(self, text: str) -> str:
         """Generate audio using Kokoro TTS"""
-        import soundfile as sf
-        import numpy as np
+        try:
+            import soundfile as sf
+            import numpy as np
+        except ImportError:
+            raise ImportError("soundfile required for Kokoro TTS. Install with: pip install soundfile")
         
         # Use Kokoro TTS
         generator = self.tts_engine(text, voice='af_heart')
@@ -112,21 +135,29 @@ class ElevenLabsTTSProvider(TTSProvider):
     def generate_audio(self, text: str) -> str:
         """Generate audio using ElevenLabs API"""
         try:
-            from elevenlabs import generate, save
+            from elevenlabs import ElevenLabs
         except ImportError:
             raise ImportError("elevenlabs package not installed. Run: pip install elevenlabs")
         
+        # Initialize ElevenLabs client
+        client = ElevenLabs(api_key=self.api_key)
+        
         # Generate audio using ElevenLabs
-        audio = generate(
+        audio_generator = client.text_to_speech.convert(
+            voice_id=self.voice_id,
             text=text,
-            voice=self.voice_id,
-            api_key=self.api_key,
-            model="eleven_monolingual_v1"
+            model_id="eleven_monolingual_v1"
         )
+        
+        # Collect audio data from generator
+        audio_data = b""
+        for chunk in audio_generator:
+            audio_data += chunk
         
         # Save to temporary file
         with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_audio:
-            save(audio, tmp_audio.name)
+            tmp_audio.write(audio_data)
+            tmp_audio.flush()
             
             # Read and encode as base64
             with open(tmp_audio.name, 'rb') as audio_file:
@@ -162,7 +193,7 @@ class FallbackTTSProvider(TTSProvider):
     def generate_audio(self, text: str) -> str:
         """Return the pre-recorded fallback message"""
         if not self.fallback_audio:
-            raise Exception("No fallback audio available")
+            raise Exception("No fallback audio available - please generate fallback_message_b64.txt")
         return self.fallback_audio
 
 # Initialize TTS Provider based on configuration
@@ -385,34 +416,7 @@ def chat_api():
             # Generate TTS audio for the response
             try:
                 logger.info(f"[{request_id}] 🎵 Starting TTS generation...")
-                with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_audio:
-                    # Use the correct Kokoro API
-                    generator = tts_engine(response_text, voice='af_heart')
-                    audio_tensor = None
-                    for i, (gs, ps, audio) in enumerate(generator):
-                        audio_tensor = audio
-                        break  # Take the first audio chunk
-                    
-                    if audio_tensor is None:
-                        raise Exception("No audio generated")
-                    
-                    # Convert tensor to numpy array and then to WAV format
-                    import soundfile as sf
-                    import numpy as np
-                    
-                    # Convert tensor to numpy if needed
-                    if hasattr(audio_tensor, 'cpu'):
-                        audio_np = audio_tensor.cpu().numpy()
-                    else:
-                        audio_np = np.array(audio_tensor)
-                    
-                    # Write WAV file using soundfile
-                    sf.write(tmp_audio.name, audio_np, 24000)  # Kokoro uses 24kHz sample rate
-                    
-                    # Read the WAV file as bytes
-                    tmp_audio.seek(0)
-                    audio_bytes = tmp_audio.read()
-                    audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
+                audio_b64 = generate_sentence_audio(response_text)
                 
                 logger.info(f"[{request_id}] ✅ TTS generation successful, audio size: {len(audio_b64)} chars")
                 logger.info(f"[{request_id}] 📤 Sending response back to client")
@@ -452,6 +456,11 @@ def call_llm_api(chat_request, request_id=None):
         request_id = str(uuid.uuid4())[:8]
     
     headers = {"Content-Type": "application/json"}
+    
+    # Add OpenAI API key if available (for OpenAI endpoints)
+    openai_api_key = os.getenv("OPENAI_API_KEY")
+    if openai_api_key:
+        headers["Authorization"] = f"Bearer {openai_api_key}"
     
     # Validate LLM endpoint
     llm_endpoint = get_llm_endpoint()
@@ -624,18 +633,25 @@ def validate_api_environment():
         errors.append("LLM_BASE_URL environment variable is not set")
     
     # Check TTS model
-    try:
-        # Test Kokoro TTS loading
-        test_tts = KPipeline(lang_code='a', device='cpu', repo_id='hexgrad/Kokoro-82M')
-        print("✅ Kokoro TTS loaded successfully")
-    except Exception as e:
-        errors.append(f"Kokoro TTS loading failed: {e}")
+    if KOKORO_AVAILABLE:
+        try:
+            # Test Kokoro TTS loading
+            test_tts = KPipeline(lang_code='a', device='cpu', repo_id='hexgrad/Kokoro-82M')
+            print("✅ Kokoro TTS loaded successfully")
+        except Exception as e:
+            errors.append(f"Kokoro TTS loading failed: {e}")
+    else:
+        print("⚠️ Kokoro TTS not available (using ElevenLabs)")
     
     # Check CUDA availability
-    if torch.cuda.is_available():
-        print("✅ CUDA available for GPU acceleration")
-    else:
-        print("⚠️ CUDA not available, using CPU")
+    try:
+        import torch
+        if torch.cuda.is_available():
+            print("✅ CUDA available for GPU acceleration")
+        else:
+            print("⚠️ CUDA not available, using CPU")
+    except ImportError:
+        print("⚠️ PyTorch not available, using CPU")
     
     if errors:
         print("❌ API environment validation failed:")
