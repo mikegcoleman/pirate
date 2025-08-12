@@ -48,6 +48,21 @@ ELEVENLABS_VOICE_ID=your_voice_id_here
 - **No Voice Switching**: Avoids jarring voice changes mid-conversation
 - **Reliability**: Multiple layers of fallback ensure robust operation
 
+## Mac Development
+
+For native Mac development, use the simplified requirements:
+
+```bash
+pip install -r requirements-mac.txt
+```
+
+Set your environment to use ElevenLabs:
+```bash
+TTS_PROVIDER=elevenlabs
+ELEVENLABS_API_KEY=your_key
+ELEVENLABS_VOICE_ID=your_voice_id
+```
+
 ## Generating Fallback Audio
 
-To generate the actual fallback audio file, run the API once with Kokoro TTS and it will create the proper audio file.
+To generate the actual fallback audio file, run the API once with Kokoro TTS (in Docker) and it will create the proper audio file.
