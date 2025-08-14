@@ -1,8 +1,11 @@
+# STT Frontend Dependencies for Raspberry Pi
 vosk==0.3.44
 sounddevice==0.5.2
-pyglet
-tts
-cffi==1.17.1
-tqdm==4.67.1
 python-dotenv==1.1.0
 httpx==0.24.1
+
+# Audio processing
+cffi==1.17.1
+
+# Utility
+tqdm==4.67.1
