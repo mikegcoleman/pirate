@@ -56,9 +56,9 @@ def should_process_transcription(text, confidence=None):
         print("Heard only 'huh', ignoring")
         return False
     
-    # Check confidence threshold if available
+    # Check confidence threshold if available (lowered for children's speech)
     if confidence is not None:
-        CONFIDENCE_THRESHOLD = 0.7
+        CONFIDENCE_THRESHOLD = 0.3  # More lenient for children
         if confidence < CONFIDENCE_THRESHOLD:
             print(f"Low confidence transcription ({confidence:.2f}), ignoring")
             return False
@@ -105,3 +105,6 @@ def transcribe():
                     else:
                         # Continue listening for better input
                         continue
+                else:
+                    # No text recognized, continue listening
+                    continue

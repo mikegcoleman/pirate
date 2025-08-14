@@ -26,7 +26,9 @@ pirate/
 │   ├── compose.yaml      # Docker compose setup (simplified)
 │   ├── env.example       # Environment template
 │   └── README.md         # Comprehensive documentation
-└── PROJECT_CONTEXT.md    # This file
+├── combined/              # Cloud-dependent test version
+│   └── main.py           # Fully cloud-dependent app for quick hardware testing
+└── CLAUDE.md             # This file
 ```
 
 ## Key Features Implemented
@@ -169,6 +171,11 @@ BLOCKSIZE=8000          # 4000 for Pi, 8000 for Mac/Windows
 2. Copy `pi_env` to `stt/.env` for Pi deployment
 3. Configure `API_URL` to point to your API
 4. Run `python main.py`
+
+### For Quick Hardware Testing:
+1. Use `combined/main.py` for fully cloud-dependent testing
+2. This version bypasses local API setup for rapid hardware validation
+3. Ideal for testing audio input/output without setting up the full architecture
 
 ## LLM Recommendations
 
