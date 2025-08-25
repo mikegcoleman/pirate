@@ -1,0 +1,54 @@
+name: Deploy LLM API to Windows
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'llm-api/**'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'llm-api/**'
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Stop existing container
+      run: |
+        cd llm-api
+        docker-compose down || echo "No existing container to stop"
+      shell: cmd
+
+    - name: Build Docker image
+      run: |
+        cd llm-api
+        docker build -t mgc0216/pirate-api:latest .
+      shell: cmd
+
+    - name: Start new container
+      run: |
+        cd llm-api
+        docker-compose up -d
+      shell: cmd
+
+    - name: Wait for service to be ready
+      run: |
+        echo "Waiting for service to start..."
+        timeout /t 10
+        curl -f http://localhost:8080/health || echo "Service not ready yet"
+      shell: cmd
+
+    - name: Show running containers
+      run: docker ps
+      shell: cmd
+
+    - name: Show service logs
+      run: |
+        cd llm-api
+        docker-compose logs --tail=20
+      shell: cmd

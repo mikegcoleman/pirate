@@ -1,0 +1,39 @@
+name: Deploy LLM API (Volume-Mounted)
+
+# Triggers only on changes to llm-api folder
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'llm-api/**'
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    defaults:
+      run:
+        working-directory: llm-api
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Restart container with new code
+      run: |
+        echo "🔄 Restarting container with updated code..."
+        docker-compose restart
+        echo "⏳ Waiting for service to restart..."
+        timeout /t 5 /nobreak > nul
+      shell: cmd
+
+    - name: Verify deployment
+      run: |
+        echo "🏥 Checking service health..."
+        curl -f http://localhost:8080/health || echo "❌ Health check failed"
+        echo.
+        echo "=== Container Status ==="
+        docker ps --filter "name=pirate-api"
+        echo.
+        echo "=== Recent Logs ==="
+        docker-compose logs --tail=10
+      shell: cmd

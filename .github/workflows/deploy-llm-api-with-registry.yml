@@ -1,0 +1,97 @@
+name: Deploy LLM API with Registry Push
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'llm-api/**'
+  workflow_dispatch:  # Allow manual triggering
+
+jobs:
+  build-and-deploy:
+    runs-on: self-hosted
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up environment
+      run: |
+        echo "TIMESTAMP=$(date +%Y%m%d-%H%M%S)" >> $GITHUB_ENV
+        echo "SHORT_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+      shell: bash
+
+    - name: Stop existing container
+      run: |
+        cd llm-api
+        docker-compose down || echo "No existing container to stop"
+      shell: cmd
+      continue-on-error: true
+
+    - name: Build Docker image
+      run: |
+        cd llm-api
+        docker build -t mgc0216/pirate-api:latest -t mgc0216/pirate-api:${{ env.SHORT_SHA }} .
+      shell: cmd
+
+    - name: Login to Docker Hub
+      if: github.event_name == 'push'
+      run: echo ${{ secrets.DOCKER_HUB_TOKEN }} | docker login -u mgc0216 --password-stdin
+      shell: cmd
+
+    - name: Push to Docker Hub
+      if: github.event_name == 'push'
+      run: |
+        docker push mgc0216/pirate-api:latest
+        docker push mgc0216/pirate-api:${{ env.SHORT_SHA }}
+      shell: cmd
+
+    - name: Start new container
+      run: |
+        cd llm-api
+        docker-compose up -d
+      shell: cmd
+
+    - name: Wait for service to be ready
+      run: |
+        echo "Waiting for service to start..."
+        for /l %%i in (1,1,30) do (
+          curl -f http://localhost:8080/health && goto :success
+          echo Attempt %%i failed, waiting...
+          timeout /t 2 /nobreak > nul
+        )
+        echo "Service failed to start within 60 seconds"
+        exit /b 1
+        :success
+        echo "Service is ready!"
+      shell: cmd
+
+    - name: Verify deployment
+      run: |
+        echo "=== Container Status ==="
+        docker ps
+        echo.
+        echo "=== Service Health ==="
+        curl -s http://localhost:8080/health | python -m json.tool || echo "Health check failed"
+        echo.
+        echo "=== Recent Logs ==="
+        cd llm-api
+        docker-compose logs --tail=10
+      shell: cmd
+
+    - name: Cleanup old images
+      run: |
+        echo "Cleaning up old images..."
+        docker image prune -f
+      shell: cmd
+      continue-on-error: true
+
+    - name: Notify deployment status
+      if: always()
+      run: |
+        if %ERRORLEVEL% EQU 0 (
+          echo "✅ Deployment successful - LLM API is running on Windows"
+        ) else (
+          echo "❌ Deployment failed - Check logs above"
+        )
+      shell: cmd
