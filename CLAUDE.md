@@ -119,6 +119,12 @@ BLOCKSIZE=8000          # 4000 for Pi, 8000 for Mac/Windows
 
 ## Recent Changes
 
+### Model Comparison Test Restructuring (Current Session)
+- ✅ Restructured `models_list.json` to separate DMR and OpenAI models into `"dmr"` and `"openai"` sections
+- ✅ Updated `model_comparison_test.py` to route requests to correct provider based on model categorization
+- ❌ **BLOCKER**: Windows machine (192.168.50.66:12434) Docker Model Runner not responding - need to start DMR service
+- 🔧 **Next Steps**: Start Docker Model Runner on Windows machine, verify firewall settings, update models_list.json with actual available models
+
 ### TTS GPU Acceleration Fixed (Latest)
 - ✅ Fixed Kokoro TTS to use GPU acceleration instead of hardcoded CPU
 - ✅ Resolved Windows file locking issue with temporary WAV files
