@@ -17,9 +17,11 @@ jobs:
 
     - name: Set up environment
       run: |
-        echo "TIMESTAMP=$(date +%Y%m%d-%H%M%S)" >> $GITHUB_ENV
-        echo "SHORT_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
-      shell: bash
+        $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+        $shortSha = git rev-parse --short HEAD
+        echo "TIMESTAMP=$timestamp" >> $env:GITHUB_ENV
+        echo "SHORT_SHA=$shortSha" >> $env:GITHUB_ENV
+      shell: powershell
 
     - name: Stop existing container
       run: |
