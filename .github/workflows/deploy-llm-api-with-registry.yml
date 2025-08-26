@@ -29,6 +29,14 @@ jobs:
         Add-Content -Path $env:GITHUB_ENV -Value "SHORT_SHA=$shortSha"
 
 
+    - name: Diagnose PowerShell policy
+      shell: 'powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}"'
+      run: |
+        Write-Host "Effective policies:"
+        Get-ExecutionPolicy -List | Format-Table -AutoSize
+        Write-Host "`nLanguage mode:"
+        $ExecutionContext.SessionState.LanguageMode
+
     - name: Stop existing container
       working-directory: llm-api
       shell: cmd
