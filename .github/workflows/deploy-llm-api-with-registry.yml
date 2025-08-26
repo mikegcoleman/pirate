@@ -18,12 +18,16 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Set up environment
-      shell: powershell 
+      shell: powershell
       run: |
+        # Allow this job's PS session to run the temp script
+        Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+
         $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
         $shortSha  = git rev-parse --short HEAD
         Add-Content -Path $env:GITHUB_ENV -Value "TIMESTAMP=$timestamp"
         Add-Content -Path $env:GITHUB_ENV -Value "SHORT_SHA=$shortSha"
+
 
     - name: Stop existing container
       working-directory: llm-api
