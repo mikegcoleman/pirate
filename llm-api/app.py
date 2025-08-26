@@ -424,8 +424,7 @@ def chat_api():
             
             # Generate TTS audio for the response
             try:
-                logger.info(f"[{request_id}] 🎵 Starting TTS generation...")
-                audio_b64 = generate_sentence_audio(response_text)
+                audio_b64 = generate_sentence_audio(response_text, request_id)
                 
                 logger.info(f"[{request_id}] ✅ TTS generation successful, audio size: {len(audio_b64)} chars")
                 logger.info(f"[{request_id}] 📤 Sending response back to client")
@@ -595,10 +594,11 @@ def split_into_sentences(text):
     
     return result
 
-def generate_sentence_audio(sentence):
+def generate_sentence_audio(sentence, request_id=None):
     """Generate TTS audio for a single sentence and return base64 encoded WAV"""
     import time
-    request_id = str(uuid.uuid4())[:8]
+    if request_id is None:
+        request_id = str(uuid.uuid4())[:8]
     start_time = time.time()
     logger.info(f"[{request_id}] 🎵 Starting TTS for sentence: {sentence[:50]}...")
     
