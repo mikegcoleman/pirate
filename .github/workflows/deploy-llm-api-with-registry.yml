@@ -17,12 +17,9 @@ jobs:
 
     - name: Set up environment
       run: |
-        Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
-        $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
-        $shortSha = git rev-parse --short HEAD
-        echo "TIMESTAMP=$timestamp" >> $env:GITHUB_ENV
-        echo "SHORT_SHA=$shortSha" >> $env:GITHUB_ENV
-      shell: powershell
+        for /f "tokens=*" %%i in ('powershell -command "Get-Date -Format 'yyyyMMdd-HHmmss'"') do echo TIMESTAMP=%%i>> %GITHUB_ENV%
+        for /f "tokens=*" %%i in ('git rev-parse --short HEAD') do echo SHORT_SHA=%%i>> %GITHUB_ENV%
+      shell: cmd
 
     - name: Stop existing container
       run: |
