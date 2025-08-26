@@ -17,6 +17,7 @@ jobs:
 
     - name: Set up environment
       run: |
+        Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
         $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
         $shortSha = git rev-parse --short HEAD
         echo "TIMESTAMP=$timestamp" >> $env:GITHUB_ENV
