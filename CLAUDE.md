@@ -84,10 +84,10 @@ pirate/
 - **Config**: `pi_env`
 
 ### Windows (API Development)
-- **TTS**: System TTS or espeak
+- **TTS**: Kokoro TTS with GPU acceleration (RTX 5070)
 - **Audio**: `mpg123` or Windows Media Player
-- **Performance**: Similar to macOS
-- **Config**: Use `env.example` as template
+- **Performance**: GPU-accelerated TTS, similar to macOS
+- **Config**: Use `requirements-win.txt` for proper PyTorch CUDA support
 
 ## Environment Variables
 
@@ -119,6 +119,13 @@ BLOCKSIZE=8000          # 4000 for Pi, 8000 for Mac/Windows
 
 ## Recent Changes
 
+### TTS GPU Acceleration Fixed (Latest)
+- ✅ Fixed Kokoro TTS to use GPU acceleration instead of hardcoded CPU
+- ✅ Resolved Windows file locking issue with temporary WAV files
+- ✅ Updated LLM_BASE_URL to correct Docker Model Runner endpoint
+- ✅ Added platform-specific requirements files (requirements-win.txt)
+- ✅ Full RTX 5070 compatibility with PyTorch 2.7.0+cu128
+
 ### Platform Detection Removed
 - Removed complex platform detection logic
 - User provides all platform-specific values
@@ -149,22 +156,25 @@ BLOCKSIZE=8000          # 4000 for Pi, 8000 for Mac/Windows
 - ✅ Request validation
 - ✅ Response validation
 - ✅ Startup validation
-- ✅ Kokoro TTS integration
+- ✅ Kokoro TTS integration with GPU acceleration
 - ✅ Health check endpoint
 - ✅ Comprehensive documentation
 - ✅ Environment template
 - ✅ Simplified Docker configuration
 - ✅ Automatic TTS model downloading
+- ✅ Windows file handling fixes
+- ✅ Docker Model Runner integration
 
 ## Development Workflow
 
 ### For Windows API Development:
 1. Copy `env.example` to `.env` in `llm-api/`
-2. Configure `LLM_BASE_URL` to point to your LLM server
+2. Configure `LLM_BASE_URL=http://localhost:12434/engines/llama.cpp/v1` for Docker Model Runner
 3. Set `PORT` if needed (default: 8080)
-4. Install dependencies: `pip install -r requirements.txt`
-5. Run `python app.py`
-6. Test with: `curl http://localhost:8080/health`
+4. Install dependencies: `pip install -r requirements-win.txt` (includes CUDA PyTorch support)
+5. Ensure Docker Model Runner is running with desired LLM model
+6. Run `python app.py`
+7. Test with: `curl http://localhost:8080/health`
 
 ### For Frontend Testing:
 1. Copy `mac_env` to `stt/.env` for Mac development
@@ -243,9 +253,10 @@ Mr. Bones is a friendly pirate who:
 - **Role**: Audio capture, playback, and user interaction
 - **Deployment**: Native Python application
 
-### TTS Voice Character Challenge
-- **Current Status**: Using Kokoro TTS (good English voice quality)
-- **Kokoro**: Character-focused TTS, good voice quality but not classic pirate
-- **Goal**: Find or create authentic pirate voice for Mr. Bones
-- **Options**: Voice cloning, custom training, or specialized TTS models
-- **Next Steps**: Consider local voice cloning (RVC/Coqui) for authentic pirate voice 
+### TTS Implementation Status
+- **Current Status**: ✅ Kokoro TTS with GPU acceleration working
+- **Performance**: GPU-accelerated on RTX 5070 (CUDA 13.0 + PyTorch 2.7.0+cu128)
+- **Voice Quality**: Good English voice quality, character-focused TTS
+- **Platform Support**: Windows (GPU), Linux/Pi (CPU fallback)
+- **File Management**: Windows file locking issues resolved
+- **Future Enhancement**: Consider voice cloning for authentic pirate voice 
