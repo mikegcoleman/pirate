@@ -9,7 +9,7 @@ on:
 
 jobs:
   build-and-deploy:
-    runs-on: [self-hosted
+    runs-on: [self-hosted]
     # If you labeled your Windows runner, you can be explicit:
     # runs-on: [self-hosted, Windows]
 
