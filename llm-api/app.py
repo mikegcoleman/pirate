@@ -74,11 +74,12 @@ class KokoroTTSProvider(TTSProvider):
         # Create models directory if it doesn't exist
         os.makedirs(os.path.dirname(model_path), exist_ok=True)
         
-        # Initialize Kokoro TTS
-        self.tts_engine = KPipeline(lang_code='a', device='cpu', repo_id='hexgrad/Kokoro-82M')
+        # Initialize Kokoro TTS with GPU support
+        device = 'cuda' if use_gpu else 'cpu'
+        self.tts_engine = KPipeline(lang_code='a', device=device, repo_id='hexgrad/Kokoro-82M')
         
         if use_gpu:
-            print("✅ Kokoro TTS: GPU available - will use GPU acceleration if supported")
+            print("✅ Kokoro TTS: Using GPU acceleration")
         else:
             print("✅ Kokoro TTS: Using CPU")
     
@@ -108,15 +109,23 @@ class KokoroTTSProvider(TTSProvider):
         
         # Create temporary WAV file
         with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_audio:
-            sf.write(tmp_audio.name, audio_np.squeeze(), 24000)
+            temp_path = tmp_audio.name
+        
+        try:
+            # Write audio to temp file (file handle is now closed)
+            sf.write(temp_path, audio_np.squeeze(), 24000)
             
             # Read the WAV file and encode as base64
-            with open(tmp_audio.name, 'rb') as audio_file:
+            with open(temp_path, 'rb') as audio_file:
                 audio_data = audio_file.read()
                 audio_base64 = base64.b64encode(audio_data).decode('utf-8')
-            
+        finally:
             # Clean up temp file
-            os.unlink(tmp_audio.name)
+            try:
+                os.unlink(temp_path)
+            except (OSError, PermissionError):
+                # Ignore cleanup errors on Windows
+                pass
         
         return audio_base64
 
