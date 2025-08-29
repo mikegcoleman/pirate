@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(source:*)",
+      "Bash(./venv/Scripts/python.exe -c \"import model_comparison_test; print(''✅ Script syntax is valid'')\")",
+      "Bash(./venv/Scripts/python.exe -c \"import model_comparison_test; print(''Script syntax is valid'')\")",
+      "Bash(./venv/Scripts/python.exe -c \"import model_comparison_test; print(''Script syntax is valid'')\")",
+      "Bash(./venv/Scripts/python.exe -c \"import model_comparison_test; print(''Script syntax is valid'')\")",
+      "Bash(./venv/Scripts/python.exe -c \"import model_comparison_test; print(''Script syntax is valid'')\")"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

@@ -359,12 +359,24 @@ def call_llm_api(chat_request, request_id=None):
     logger.info(f"[{request_id}] 🌐 Calling LLM endpoint: {llm_endpoint}")
     logger.info(f"[{request_id}] 🤖 Using model: {model}")
     
+    # Add optimal decode parameters for Mistral models
+    optimized_request = chat_request.copy()
+    if model and 'mistral' in model.lower():
+        optimized_request.update({
+            'temperature': 0.6,
+            'top_p': 0.9,
+            'max_tokens': 120,
+            'presence_penalty': 0.3,
+            'frequency_penalty': 0.2
+        })
+        logger.info(f"[{request_id}] 🎯 Applied Mistral optimization parameters")
+    
     # Send request to LLM API
     logger.info(f"[{request_id}] 📡 Sending request to LLM...")
     response = requests.post(
         llm_endpoint,
         headers=headers,
-        json=chat_request,
+        json=optimized_request,
         timeout=30
     )
     
@@ -401,7 +413,79 @@ def call_llm_api(chat_request, request_id=None):
     if not content or not content.strip():
         raise Exception("Empty content in LLM API response")
     
-    return content.strip()
+    # Apply fast format post-processing for character consistency
+    processed_content = apply_format_post_processing(content.strip(), request_id)
+    return processed_content
+
+def apply_format_post_processing(content, request_id=None):
+    """Apply fast format post-processing for Mr. Bones character consistency"""
+    if request_id is None:
+        request_id = "unknown"
+    
+    original_content = content
+    
+    # Fix UTF-8 encoding issues (mojibake)
+    content = content.encode('utf-8', errors='ignore').decode('utf-8')
+    
+    # Replace contractions with expanded forms
+    contractions_map = {
+        "don't": "do not", "Don't": "Do not", "DON'T": "DO NOT",
+        "can't": "cannot", "Can't": "Cannot", "CAN'T": "CANNOT", 
+        "won't": "will not", "Won't": "Will not", "WON'T": "WILL NOT",
+        "I'm": "I am", "I'M": "I AM",
+        "you're": "you are", "You're": "You are", "YOU'RE": "YOU ARE",
+        "we're": "we are", "We're": "We are", "WE'RE": "WE ARE",
+        "they're": "they are", "They're": "They are", "THEY'RE": "THEY ARE",
+        "it's": "it is", "It's": "It is", "IT'S": "IT IS",
+        "that's": "that is", "That's": "That is", "THAT'S": "THAT IS",
+        "what's": "what is", "What's": "What is", "WHAT'S": "WHAT IS",
+        "here's": "here is", "Here's": "Here is", "HERE'S": "HERE IS",
+        "there's": "there is", "There's": "There is", "THERE'S": "THERE IS",
+        "let's": "let us", "Let's": "Let us", "LET'S": "LET US",
+        "I'll": "I will", "I'LL": "I WILL",
+        "you'll": "you will", "You'll": "You will", "YOU'LL": "YOU WILL",
+        "he'll": "he will", "He'll": "He will", "HE'LL": "HE WILL",
+        "she'll": "she will", "She'll": "She will", "SHE'LL": "SHE WILL",
+        "we'll": "we will", "We'll": "We will", "WE'LL": "WE WILL",
+        "they'll": "they will", "They'll": "They will", "THEY'LL": "THEY WILL",
+        "I've": "I have", "I'VE": "I HAVE",
+        "you've": "you have", "You've": "You have", "YOU'VE": "YOU HAVE",
+        "we've": "we have", "We've": "We have", "WE'VE": "WE HAVE",
+        "they've": "they have", "They've": "They have", "THEY'VE": "THEY HAVE",
+        "I'd": "I would", "I'D": "I WOULD",
+        "you'd": "you would", "You'd": "You would", "YOU'D": "YOU WOULD",
+        "he'd": "he would", "He'd": "He would", "HE'D": "HE WOULD",
+        "she'd": "she would", "She'd": "She would", "SHE'D": "SHE WOULD",
+        "we'd": "we would", "We'd": "We would", "WE'D": "WE WOULD",
+        "they'd": "they would", "They'd": "They would", "THEY'D": "THEY WOULD"
+    }
+    
+    # Apply contraction replacements
+    for contraction, expansion in contractions_map.items():
+        content = re.sub(r'\b' + re.escape(contraction) + r'\b', expansion, content)
+    
+    # Replace Mr. with Mister
+    content = re.sub(r'\bMr\.', 'Mister', content)
+    content = re.sub(r'\bmr\.', 'mister', content)  # Handle lowercase
+    
+    # Fix common UTF-8 issues
+    utf8_fixes = {
+        'â€™': "'",  # Right single quotation mark
+        'â€œ': '"',  # Left double quotation mark  
+        'â€': '"',   # Right double quotation mark
+        'â€¦': '...',  # Ellipsis
+        'â€"': '-',   # Em dash
+        'â€"': '--',  # En dash
+    }
+    
+    for broken, fixed in utf8_fixes.items():
+        content = content.replace(broken, fixed)
+    
+    # Log if any changes were made
+    if content != original_content:
+        logger.info(f"[{request_id}] 🔧 Applied format post-processing")
+    
+    return content
 
 
 

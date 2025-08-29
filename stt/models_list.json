@@ -1,15 +1,8 @@
 {
   "dmr": [
-    "ai/deepseek-r1-distill-llama",
-    "ai/mistral:latest",
-    "ai/qwen2.5:latest",
-    "ai/llama3.2",
-    "ai/gemma3:4B-Q4_0",
-    "ai/smollm2:latest"
+    "ai/mistral:7B-Q4_K_M"
   ],
   "openai": [
-    "gpt-4",
-    "gpt-4-mini",
-    "gpt-5"
+    "gpt-4"
   ]
 }
