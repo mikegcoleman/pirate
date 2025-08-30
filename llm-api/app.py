@@ -1,13 +1,12 @@
 import os
 import json
 import requests
-from flask import Flask, request, jsonify, send_file, Response
+from flask import Flask, request, jsonify, send_file
 import signal
 import sys
 import tempfile
 import base64
 import wave
-import re
 import uuid
 from dotenv import load_dotenv
 import logging
@@ -91,8 +90,18 @@ class KokoroTTSProvider(TTSProvider):
         except ImportError:
             raise ImportError("soundfile required for Kokoro TTS. Install with: pip install soundfile")
         
-        # Use Kokoro TTS
-        generator = self.tts_engine(text, voice='af_heart')
+        # Use Kokoro TTS with custom voice configuration
+        # Voice combination: warm_narrator (70%) + breathy_overlay (15%) + resonant_overlay (15%)
+        # Pitch: +1, Speed: 0.95
+        voices = ['warm_narrator', 'breathy_overlay', 'resonant_overlay']
+        weights = [0.7, 0.15, 0.15]
+        generator = self.tts_engine(
+            text, 
+            voice=voices,
+            voice_weights=weights,
+            pitch=1.0,  # +1 semitone
+            speed=0.95
+        )
         audio_tensor = None
         for i, (gs, ps, audio) in enumerate(generator):
             audio_tensor = audio
@@ -252,136 +261,6 @@ def health_check():
             'error': str(e)
         }), 500
 
-@app.route('/api/chat/stream', methods=['POST'])
-def chat_stream_api():
-    """Processes streaming chat API requests with sentence-level TTS"""
-    request_id = str(uuid.uuid4())[:8]
-    logger.info(f"[{request_id}] 📥 Received streaming chat request from {request.remote_addr}")
-    
-    try:
-        # Validate request
-        if not request.is_json:
-            logger.error(f"[{request_id}] ❌ Invalid content type - not JSON")
-            return jsonify({'error': 'Content-Type must be application/json'}), 400
-        
-        chat_request = request.json
-        if not chat_request:
-            logger.error(f"[{request_id}] ❌ No data received in request body")
-            return jsonify({'error': 'No data received'}), 400
-        
-        # Validate required fields
-        if 'model' not in chat_request:
-            logger.error(f"[{request_id}] ❌ Missing required field: model")
-            return jsonify({'error': 'Missing required field: model'}), 400
-        if 'messages' not in chat_request:
-            logger.error(f"[{request_id}] ❌ Missing required field: messages")
-            return jsonify({'error': 'Missing required field: messages'}), 400
-        
-        logger.info(f"[{request_id}] 📋 Request payload: {json.dumps(chat_request, indent=2)}")
-        
-        def generate_streaming_response():
-            """Generator function for streaming audio chunks"""
-            try:
-                # Set streaming flag for LLM API
-                chat_request['stream'] = True
-                
-                # Call streaming LLM API
-                accumulated_text = ""
-                sentence_buffer = ""
-                
-                for chunk_text in call_streaming_llm_api(chat_request):
-                    accumulated_text += chunk_text
-                    sentence_buffer += chunk_text
-                    
-                    # Check for sentence boundaries
-                    sentences = split_into_sentences(sentence_buffer)
-                    
-                    # Process complete sentences
-                    for sentence in sentences[:-1]:  # All but the last (incomplete) sentence
-                        if sentence.strip():
-                            # Send text immediately for faster display
-                            text_chunk_data = {
-                                'type': 'text_preview',
-                                'sentence': sentence.strip(),
-                                'chunk_id': str(uuid.uuid4())
-                            }
-                            yield f"data: {json.dumps(text_chunk_data)}\n\n"
-                            
-                            # Then generate and send audio
-                            try:
-                                audio_b64 = generate_sentence_audio(sentence.strip())
-                                chunk_data = {
-                                    'type': 'audio_chunk',
-                                    'sentence': sentence.strip(),
-                                    'audio_base64': audio_b64,
-                                    'chunk_id': str(uuid.uuid4())
-                                }
-                                yield f"data: {json.dumps(chunk_data)}\n\n"
-                            except Exception as tts_error:
-                                logger.error(f"[{request_id}] ❌ TTS error for sentence: {tts_error}")
-                                # Send text-only chunk if TTS fails
-                                chunk_data = {
-                                    'type': 'text_chunk',
-                                    'sentence': sentence.strip(),
-                                    'error': 'TTS generation failed',
-                                    'chunk_id': str(uuid.uuid4())
-                                }
-                                yield f"data: {json.dumps(chunk_data)}\n\n"
-                    
-                    # Keep the incomplete sentence in buffer
-                    sentence_buffer = sentences[-1] if sentences else ""
-                
-                # Process any remaining text
-                if sentence_buffer.strip():
-                    try:
-                        audio_b64 = generate_sentence_audio(sentence_buffer.strip())
-                        chunk_data = {
-                            'type': 'audio_chunk',
-                            'sentence': sentence_buffer.strip(),
-                            'audio_base64': audio_b64,
-                            'chunk_id': str(uuid.uuid4())
-                        }
-                        yield f"data: {json.dumps(chunk_data)}\n\n"
-                    except Exception as tts_error:
-                        logger.error(f"[{request_id}] ❌ TTS error for final sentence: {tts_error}")
-                        chunk_data = {
-                            'type': 'text_chunk',
-                            'sentence': sentence_buffer.strip(),
-                            'error': 'TTS generation failed',
-                            'chunk_id': str(uuid.uuid4())
-                        }
-                        yield f"data: {json.dumps(chunk_data)}\n\n"
-                
-                # Send completion signal
-                logger.info(f"[{request_id}] 🏁 Streaming response completed, total length: {len(accumulated_text)} chars")
-                logger.info(f"[{request_id}] 📤 Sending completion signal back to client")
-                completion_data = {
-                    'type': 'complete',
-                    'full_response': accumulated_text
-                }
-                yield f"data: {json.dumps(completion_data)}\n\n"
-                
-            except Exception as e:
-                logger.error(f"[{request_id}] ❌ Streaming error: {e}")
-                error_data = {
-                    'type': 'error',
-                    'error': str(e)
-                }
-                yield f"data: {json.dumps(error_data)}\n\n"
-        
-        return Response(
-            generate_streaming_response(),
-            mimetype='text/event-stream',
-            headers={
-                'Cache-Control': 'no-cache',
-                'Connection': 'keep-alive',
-                'Access-Control-Allow-Origin': '*'
-            }
-        )
-        
-    except Exception as e:
-        logger.error(f"[{request_id}] 💥 Unexpected error in chat_stream_api: {e}")
-        return jsonify({'error': 'Internal server error'}), 500
 
 @app.route('/api/chat', methods=['POST'])
 def chat_api():
@@ -608,75 +487,7 @@ def apply_format_post_processing(content, request_id=None):
     
     return content
 
-def call_streaming_llm_api(chat_request):
-    """Calls the LLM API with streaming and yields response chunks"""
-    request_id = str(uuid.uuid4())[:8]
-    headers = {"Content-Type": "application/json"}
-    
-    # Validate LLM endpoint
-    llm_endpoint = get_llm_endpoint()
-    if not llm_endpoint:
-        logger.error(f"[{request_id}] ❌ LLM_BASE_URL environment variable is not set")
-        raise Exception("LLM_BASE_URL environment variable is not set")
-    
-    model = chat_request.get('model', 'unknown')
-    logger.info(f"[{request_id}] 🌐 Calling streaming LLM endpoint: {llm_endpoint}")
-    logger.info(f"[{request_id}] 🤖 Using model: {model}")
-    
-    # Send streaming request to LLM API
-    logger.info(f"[{request_id}] 📡 Sending streaming request to LLM...")
-    response = requests.post(
-        llm_endpoint,
-        headers=headers,
-        json=chat_request,
-        timeout=60,  # Longer timeout for streaming
-        stream=True
-    )
-    
-    # Check if the status code is not 200 OK
-    if response.status_code != 200:
-        logger.error(f"[{request_id}] 🚫 Streaming LLM API returned status {response.status_code}: {response.text}")
-        raise requests.exceptions.HTTPError(f"API returned status code {response.status_code}: {response.text}")
-    
-    logger.info(f"[{request_id}] ✅ Streaming LLM API responded with status 200")
-    
-    # Process streaming response
-    for line in response.iter_lines():
-        if line:
-            line_str = line.decode('utf-8')
-            if line_str.startswith('data: '):
-                data_str = line_str[6:]  # Remove 'data: ' prefix
-                if data_str.strip() == '[DONE]':
-                    break
-                
-                try:
-                    chunk_data = json.loads(data_str)
-                    if 'choices' in chunk_data and len(chunk_data['choices']) > 0:
-                        delta = chunk_data['choices'][0].get('delta', {})
-                        content = delta.get('content', '')
-                        if content:
-                            yield content
-                except json.JSONDecodeError:
-                    # Skip invalid JSON chunks
-                    continue
 
-def split_into_sentences(text):
-    """Split text into sentences using punctuation boundaries"""
-    # Simple sentence splitting - can be enhanced for better accuracy
-    sentence_endings = r'[.!?]+\s*'
-    sentences = re.split(f'({sentence_endings})', text)
-    
-    # Recombine sentences with their punctuation
-    result = []
-    for i in range(0, len(sentences), 2):
-        if i < len(sentences):
-            sentence = sentences[i]
-            if i + 1 < len(sentences):
-                sentence += sentences[i + 1]
-            if sentence.strip():
-                result.append(sentence)
-    
-    return result
 
 def generate_sentence_audio(sentence, request_id=None):
     """Generate TTS audio for a single sentence and return base64 encoded WAV"""
