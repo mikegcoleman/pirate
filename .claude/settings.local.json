@@ -10,7 +10,10 @@
       "Bash(./venv/Scripts/python.exe -c \"import model_comparison_test; print(''Script syntax is valid'')\")",
       "Bash(tshark:*)",
       "Read(//mnt/c/Users/msmik/OneDrive/Documents/**)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(git log:*)",
+      "Bash(git pull:*)",
+      "Bash(curl:*)"
     ],
     "deny": [],
     "ask": []

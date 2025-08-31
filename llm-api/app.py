@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 import logging
 from datetime import datetime
 from abc import ABC, abstractmethod
+import re
 
 # Load environment variables first to check TTS provider
 load_dotenv()
@@ -90,16 +91,11 @@ class KokoroTTSProvider(TTSProvider):
         except ImportError:
             raise ImportError("soundfile required for Kokoro TTS. Install with: pip install soundfile")
         
-        # Use Kokoro TTS with custom voice configuration
-        # Voice combination: warm_narrator (70%) + breathy_overlay (15%) + resonant_overlay (15%)
-        # Pitch: +1, Speed: 0.95
-        voices = ['warm_narrator', 'breathy_overlay', 'resonant_overlay']
-        weights = [0.7, 0.15, 0.15]
+        # Use Kokoro TTS with valid voice
+        # Using af_heart as shown in the error message example
         generator = self.tts_engine(
             text, 
-            voice=voices,
-            voice_weights=weights,
-            pitch=1.0,  # +1 semitone
+            voice="af_heart",
             speed=0.95
         )
         audio_tensor = None
