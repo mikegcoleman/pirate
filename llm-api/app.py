@@ -291,6 +291,14 @@ class ElevenLabsStreamingTTSProvider:
                 'request_id': request_id
             }, room=socket_id)
             
+            # DEBUG: Test if basic events work
+            logger.info(f"[{request_id}] 🧪 Testing basic event emission to room {socket_id}")
+            socketio.emit('test_event', {
+                'message': 'This is a test event',
+                'request_id': request_id
+            }, room=socket_id)
+            logger.info(f"[{request_id}] ✅ Test event emitted")
+            
             # Process first chunk immediately for fastest response
             logger.info(f"[{request_id}] 🚀 Processing first chunk immediately (ultra-fast)...")
             first_start = time.time()

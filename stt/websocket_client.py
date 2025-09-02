@@ -147,6 +147,7 @@ class PirateWebSocketClient:
         self.sio.on('audio_complete_fallback', self._on_audio_complete_fallback)
         self.sio.on('audio_error', self._on_audio_error)
         self.sio.on('error', self._on_error)
+        self.sio.on('test_event', self._on_test_event)
         
         # Debug: Register a catch-all event handler to see ALL events
         @self.sio.on('*')
@@ -240,6 +241,12 @@ class PirateWebSocketClient:
         error = data.get('error', 'Unknown error')
         request_id = data.get('request_id', 'unknown')
         print(f"❌ [{request_id}] Server error: {error}")
+    
+    async def _on_test_event(self, data):
+        """Handle test event for debugging."""
+        message = data.get('message', 'No message')
+        request_id = data.get('request_id', 'unknown')
+        print(f"🧪 [{request_id}] TEST EVENT RECEIVED: {message}")
     
     async def connect(self):
         """Connect to the WebSocket server."""
