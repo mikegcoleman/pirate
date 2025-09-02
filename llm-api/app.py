@@ -299,11 +299,13 @@ class ElevenLabsStreamingTTSProvider:
             
             # Emit first chunk
             first_audio_b64 = base64.b64encode(first_audio).decode('utf-8')
+            logger.info(f"[{request_id}] 📤 Emitting first chunk: seq=0, size={len(first_audio_b64)} chars, to room={socket_id}")
             socketio.emit('audio_chunk', {
                 'sequence': 0,
                 'data': first_audio_b64,
                 'request_id': request_id
             }, room=socket_id)
+            logger.info(f"[{request_id}] ✅ First chunk emitted successfully")
             
             logger.info(f"[{request_id}] ⚡ First chunk ready in {first_time:.2f}s")
             
@@ -337,12 +339,13 @@ class ElevenLabsStreamingTTSProvider:
                     for i in range(1, total_chunks):
                         if i in results:
                             audio_b64 = base64.b64encode(results[i]).decode('utf-8')
+                            logger.info(f"[{request_id}] 📤 Emitting chunk: seq={i}, size={len(audio_b64)} chars, to room={socket_id}")
                             socketio.emit('audio_chunk', {
                                 'sequence': i,
                                 'data': audio_b64,
                                 'request_id': request_id
                             }, room=socket_id)
-                            logger.info(f"[{request_id}] 📤 Sent chunk {i+1}/{total_chunks}")
+                            logger.info(f"[{request_id}] ✅ Chunk {i+1}/{total_chunks} emitted successfully")
             
             # Emit completion signal
             socketio.emit('audio_complete', {'request_id': request_id}, room=socket_id)

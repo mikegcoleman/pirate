@@ -147,6 +147,13 @@ class PirateWebSocketClient:
         self.sio.on('audio_complete_fallback', self._on_audio_complete_fallback)
         self.sio.on('audio_error', self._on_audio_error)
         self.sio.on('error', self._on_error)
+        
+        # Debug: Register a catch-all event handler
+        @self.sio.event
+        async def catch_all_events(*args):
+            print(f"🔍 CLIENT: Received unknown event: {args}")
+        
+        print("✅ CLIENT: All WebSocket event handlers registered")
     
     def _load_system_prompt(self) -> str:
         """Load the system prompt from file."""
@@ -189,16 +196,23 @@ class PirateWebSocketClient:
     
     async def _on_audio_chunk(self, data):
         """Handle incoming audio chunk."""
+        print(f"🔊 CLIENT: Received audio_chunk event! Data keys: {list(data.keys())}")
+        
         sequence = data.get('sequence', 0)
         audio_b64 = data.get('data', '')
         request_id = data.get('request_id', 'unknown')
+        
+        print(f"🔊 CLIENT: Processing chunk - seq={sequence}, b64_len={len(audio_b64)}, req_id={request_id}")
         
         try:
             audio_data = base64.b64decode(audio_b64)
             print(f"📦 Chunk {sequence}: {len(audio_data)} bytes, base64: {len(audio_b64)} chars")
             self.audio_player.add_chunk(sequence, audio_data, request_id)
+            print(f"✅ CLIENT: Chunk {sequence} added to audio player")
         except Exception as e:
             print(f"❌ Error processing audio chunk: {e}")
+            import traceback
+            traceback.print_exc()
     
     async def _on_audio_complete(self, data):
         """Handle completion of audio stream."""
