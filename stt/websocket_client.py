@@ -150,11 +150,22 @@ class PirateWebSocketClient:
         self.sio.on('test_event', self._on_test_event)
         
         # Debug: Register a catch-all event handler to see ALL events
-        @self.sio.on('*')
-        async def catch_all_events(event, *args):
-            print(f"🔍 CLIENT: Received event '{event}' with args: {len(args) if args else 0}")
-            if event == 'audio_chunk':
-                print(f"🚨 CLIENT: FOUND audio_chunk event! Args: {args}")
+        @self.sio.event
+        async def generic_event_handler(event_name, *args):
+            print(f"🔍 CLIENT: Generic handler - event='{event_name}', args={len(args) if args else 0}")
+            if event_name == 'audio_chunk':
+                print(f"🚨 CLIENT: Catch-all found audio_chunk! Args: {args}")
+                # Try to process it here as backup
+                if args:
+                    await self._on_audio_chunk(args[0])
+                    
+        # Also try registering with different method
+        async def debug_audio_chunk_handler(*args):
+            print(f"🔍 DEBUG: Alternative audio_chunk handler called with {len(args)} args")
+            if args:
+                await self._on_audio_chunk(args[0])
+        
+        self.sio.on('audio_chunk', debug_audio_chunk_handler)
         
         print("✅ CLIENT: All WebSocket event handlers registered")
     
