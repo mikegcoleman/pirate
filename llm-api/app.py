@@ -41,8 +41,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
     
 def handle_shutdown(signum, frame):
-    print(f"Received signal {signum}, shutting down gracefully...")
-    sys.exit(0)
+    print(f"\nReceived signal {signum}, shutting down gracefully...")
+    os._exit(0)
 
 # Register signal handlers
 signal.signal(signal.SIGINT, handle_shutdown)
@@ -178,14 +178,20 @@ class ElevenLabsTTSProvider(TTSProvider):
         with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_audio:
             tmp_audio.write(audio_data)
             tmp_audio.flush()
-            
-            # Read and encode as base64
-            with open(tmp_audio.name, 'rb') as audio_file:
+            temp_path = tmp_audio.name
+        
+        try:
+            # Read and encode as base64 (file handle is now closed)
+            with open(temp_path, 'rb') as audio_file:
                 audio_data = audio_file.read()
                 audio_base64 = base64.b64encode(audio_data).decode('utf-8')
-            
+        finally:
             # Clean up temp file
-            os.unlink(tmp_audio.name)
+            try:
+                os.unlink(temp_path)
+            except (OSError, PermissionError):
+                # Ignore cleanup errors on Windows
+                pass
         
         return audio_base64
 
@@ -201,25 +207,42 @@ class ElevenLabsStreamingTTSProvider:
         
         print(f"✅ ElevenLabs Streaming TTS: Initialized with voice ID {self.voice_id}")
     
-    def chunk_text(self, text: str, max_chunk_size: int = 100) -> list[str]:
-        """Split text into smaller chunks for faster initial response."""
+    def get_first_chunk(self, text: str) -> tuple[str, str]:
+        """Get the first sentence/chunk for ultra-fast start."""
         import re
-        sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+        # Find first sentence end
+        match = re.search(r'^.*?[.!?]\s*', text)
+        if match:
+            first = match.group(0).strip()
+            remaining = text[len(first):].strip()
+            return first, remaining
+        else:
+            # No sentence boundary, take first ~50 chars at word boundary
+            if len(text) > 50:
+                split_point = text.rfind(' ', 0, 50)
+                if split_point > 20:  # Ensure meaningful chunk
+                    return text[:split_point], text[split_point:].strip()
+            return text, ""
+    
+    def chunk_remaining_text(self, text: str, max_chunk_size: int = 80) -> list[str]:
+        """Split remaining text into chunks optimized for speed."""
+        if not text:
+            return []
+            
         chunks = []
+        words = text.split()
         current_chunk = ""
         
-        for sentence in sentences:
-            if current_chunk and len(current_chunk + " " + sentence) > max_chunk_size:
-                chunks.append(current_chunk.strip())
-                current_chunk = sentence
+        for word in words:
+            if len(current_chunk + " " + word) < max_chunk_size:
+                current_chunk += " " + word if current_chunk else word
             else:
                 if current_chunk:
-                    current_chunk += " " + sentence
-                else:
-                    current_chunk = sentence
+                    chunks.append(current_chunk)
+                current_chunk = word
         
         if current_chunk:
-            chunks.append(current_chunk.strip())
+            chunks.append(current_chunk)
         
         return chunks
     
@@ -253,25 +276,25 @@ class ElevenLabsStreamingTTSProvider:
         return response.content
     
     def generate_streaming_audio(self, text: str, socket_id: str, request_id: str):
-        """Generate streaming audio chunks and emit via WebSocket."""
+        """Generate streaming audio chunks and emit via WebSocket with ultra-fast first chunk."""
         try:
-            chunks = self.chunk_text(text)
-            logger.info(f"[{request_id}] 🎵 Split text into {len(chunks)} chunks for streaming")
+            # Use ultra-fast first chunk strategy
+            first_chunk, remaining_text = self.get_first_chunk(text)
+            remaining_chunks = self.chunk_remaining_text(remaining_text)
+            
+            total_chunks = 1 + len(remaining_chunks)
+            logger.info(f"[{request_id}] 🎵 Ultra-fast chunking: first={len(first_chunk)} chars, remaining={len(remaining_chunks)} chunks")
             
             # Emit start signal
             socketio.emit('audio_start', {
-                'total_chunks': len(chunks),
+                'total_chunks': total_chunks,
                 'request_id': request_id
             }, room=socket_id)
             
-            if not chunks:
-                socketio.emit('audio_complete', {'request_id': request_id}, room=socket_id)
-                return
-            
             # Process first chunk immediately for fastest response
-            logger.info(f"[{request_id}] 🚀 Processing first chunk immediately...")
+            logger.info(f"[{request_id}] 🚀 Processing first chunk immediately (ultra-fast)...")
             first_start = time.time()
-            first_audio = self.text_to_speech_chunk(chunks[0])
+            first_audio = self.text_to_speech_chunk(first_chunk)
             first_time = time.time() - first_start
             
             # Emit first chunk
@@ -285,7 +308,7 @@ class ElevenLabsStreamingTTSProvider:
             logger.info(f"[{request_id}] ⚡ First chunk ready in {first_time:.2f}s")
             
             # Process remaining chunks in parallel if there are more
-            if len(chunks) > 1:
+            if remaining_chunks:
                 def process_chunk(chunk_data):
                     index, chunk_text = chunk_data
                     try:
@@ -297,7 +320,7 @@ class ElevenLabsStreamingTTSProvider:
                 
                 # Process remaining chunks in parallel
                 with ThreadPoolExecutor(max_workers=3) as executor:
-                    chunk_data = [(i+1, chunk) for i, chunk in enumerate(chunks[1:])]
+                    chunk_data = [(i+1, chunk) for i, chunk in enumerate(remaining_chunks)]
                     future_to_index = {
                         executor.submit(process_chunk, data): data[0] 
                         for data in chunk_data
@@ -311,7 +334,7 @@ class ElevenLabsStreamingTTSProvider:
                             results[index] = audio_data
                     
                     # Emit chunks in sequence order
-                    for i in range(1, len(chunks)):
+                    for i in range(1, total_chunks):
                         if i in results:
                             audio_b64 = base64.b64encode(results[i]).decode('utf-8')
                             socketio.emit('audio_chunk', {
@@ -319,7 +342,7 @@ class ElevenLabsStreamingTTSProvider:
                                 'data': audio_b64,
                                 'request_id': request_id
                             }, room=socket_id)
-                            logger.info(f"[{request_id}] 📤 Sent chunk {i+1}/{len(chunks)}")
+                            logger.info(f"[{request_id}] 📤 Sent chunk {i+1}/{total_chunks}")
             
             # Emit completion signal
             socketio.emit('audio_complete', {'request_id': request_id}, room=socket_id)
@@ -399,19 +422,99 @@ def get_llm_endpoint():
 def index():
     return "Welcome to the pirate LLM chat API! Use /api/chat to interact with the model.", 200
 
+def test_llm_connection():
+    """Test LLM connection with a simple request"""
+    try:
+        logger.info("🔍 Testing LLM connection...")
+        test_request = {
+            "model": os.getenv("LLM_MODEL", "llama3.2:8b-instruct-q4_K_M"),
+            "messages": [{"role": "user", "content": "Say 'OK' if you can hear me."}],
+            "max_tokens": 5,
+            "temperature": 0.1
+        }
+        
+        response_text = call_llm_api(test_request, "health-check")
+        logger.info(f"✅ LLM test successful: {response_text[:50]}...")
+        return True, response_text
+    except Exception as e:
+        logger.error(f"❌ LLM test failed: {e}")
+        return False, str(e)
+
+def test_tts_connection():
+    """Test TTS provider with a simple request"""
+    try:
+        logger.info("🔍 Testing TTS connection...")
+        
+        # Test the primary TTS provider
+        if tts_provider:
+            test_audio = tts_provider.generate_audio("Test")
+            logger.info(f"✅ Primary TTS test successful (audio length: {len(test_audio)} chars)")
+            return True, "Primary TTS working"
+        else:
+            logger.warning("⚠️ No primary TTS provider configured")
+            
+        # Test fallback if available
+        if fallback_provider:
+            test_audio = fallback_provider.generate_audio("Test")
+            logger.info(f"✅ Fallback TTS test successful (audio length: {len(test_audio)} chars)")
+            return True, "Fallback TTS working"
+        else:
+            logger.warning("⚠️ No fallback TTS provider configured")
+            
+        return False, "No TTS providers available"
+    except Exception as e:
+        logger.error(f"❌ TTS test failed: {e}")
+        return False, str(e)
+
 @app.route('/health')
 def health_check():
-    """Health check endpoint for monitoring"""
+    """Comprehensive health check endpoint for monitoring"""
+    health_status = {
+        'status': 'healthy',
+        'service': 'pirate-api',
+        'timestamp': datetime.utcnow().isoformat() + 'Z',
+        'checks': {}
+    }
+    
+    all_healthy = True
+    
     try:
-        # Basic health check - just return success
-        return jsonify({
-            'status': 'healthy',
-            'service': 'pirate-api',
-            'timestamp': '2024-01-01T00:00:00Z'  # You could add real timestamp if needed
-        }), 200
+        # Test LLM connection
+        llm_healthy, llm_result = test_llm_connection()
+        health_status['checks']['llm'] = {
+            'status': 'healthy' if llm_healthy else 'unhealthy',
+            'details': llm_result,
+            'endpoint': get_llm_endpoint()
+        }
+        if not llm_healthy:
+            all_healthy = False
+        
+        # Test TTS connection  
+        tts_healthy, tts_result = test_tts_connection()
+        health_status['checks']['tts'] = {
+            'status': 'healthy' if tts_healthy else 'unhealthy', 
+            'details': tts_result,
+            'primary_provider': tts_provider_name if tts_provider else None,
+            'fallback_available': fallback_provider is not None
+        }
+        if not tts_healthy:
+            all_healthy = False
+            
+        # Overall status
+        if not all_healthy:
+            health_status['status'] = 'degraded'
+            
+        status_code = 200 if all_healthy else 503
+        logger.info(f"🏥 Health check completed: {health_status['status']}")
+        
+        return jsonify(health_status), status_code
+        
     except Exception as e:
+        logger.error(f"❌ Health check failed: {e}")
         return jsonify({
             'status': 'unhealthy',
+            'service': 'pirate-api',
+            'timestamp': datetime.utcnow().isoformat() + 'Z',
             'error': str(e)
         }), 500
 
@@ -809,14 +912,64 @@ def validate_api_environment():
     
     print("✅ API environment validation passed")
 
+def run_startup_health_checks():
+    """Run comprehensive health checks at startup"""
+    print("\n🏥 Running startup health checks...")
+    
+    all_healthy = True
+    
+    # Test LLM connection
+    print("📡 Testing LLM connection...")
+    try:
+        llm_healthy, llm_result = test_llm_connection()
+        if llm_healthy:
+            print(f"✅ LLM connection successful")
+        else:
+            print(f"❌ LLM connection failed: {llm_result}")
+            all_healthy = False
+    except Exception as e:
+        print(f"❌ LLM test error: {e}")
+        all_healthy = False
+    
+    # Test TTS connection
+    print("🎵 Testing TTS connection...")
+    try:
+        tts_healthy, tts_result = test_tts_connection()
+        if tts_healthy:
+            print(f"✅ TTS connection successful: {tts_result}")
+        else:
+            print(f"❌ TTS connection failed: {tts_result}")
+            all_healthy = False
+    except Exception as e:
+        print(f"❌ TTS test error: {e}")
+        all_healthy = False
+    
+    if all_healthy:
+        print("✅ All startup health checks passed!")
+    else:
+        print("⚠️ Some health checks failed - server will start but may have limited functionality")
+    
+    return all_healthy
+
 if __name__ == '__main__':
     port = int(os.getenv("PORT", 8080))
     
     # Validate environment before starting
     validate_api_environment()
     
-    print(f"Server starting on http://localhost:{port}")
-    print(f"Using LLM endpoint: {get_llm_endpoint()}")
-    print(f"WebSocket streaming TTS: {'✅ Available' if streaming_tts_provider else '❌ Not available'}")
+    # Run startup health checks
+    startup_healthy = run_startup_health_checks()
     
-    socketio.run(app, host='0.0.0.0', port=port, debug=os.getenv("DEBUG", "false").lower() == "true")
+    print(f"\n🚀 Server starting on http://localhost:{port}")
+    print(f"📡 Using LLM endpoint: {get_llm_endpoint()}")
+    print(f"🎵 Primary TTS provider: {tts_provider_name}")
+    print(f"🔄 Fallback TTS available: {'✅ Yes' if fallback_provider else '❌ No'}")
+    print(f"🌐 WebSocket streaming TTS: {'✅ Available' if streaming_tts_provider else '❌ Not available'}")
+    print(f"🏥 Startup health status: {'✅ All systems operational' if startup_healthy else '⚠️ Some issues detected'}")
+    print(f"📍 Health endpoint: http://localhost:{port}/health")
+    
+    try:
+        socketio.run(app, host='0.0.0.0', port=port, debug=os.getenv("DEBUG", "false").lower() == "true")
+    except KeyboardInterrupt:
+        print("\nShutting down...")
+        os._exit(0)

@@ -6,7 +6,10 @@
       "WebSearch",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Read(/mnt/c/Users/msmik/Documents/src/pirate/**)",
+      "Bash(source:*)",
+      "Bash(venv/Scripts/python.exe generate_fallback.py:*)"
     ],
     "deny": [],
     "ask": []
