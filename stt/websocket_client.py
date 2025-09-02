@@ -14,9 +14,11 @@ import subprocess
 import queue
 import threading
 import time
+import signal
 from urllib.parse import urlparse
 import socketio
 import dotenv
+import aiohttp
 
 import stt
 
@@ -131,6 +133,9 @@ class PirateWebSocketClient:
         self.audio_player = StreamingAudioPlayer(AUDIO_PLAYER)
         self.conversation_history = []
         
+        # Load system prompt
+        self.system_prompt = self._load_system_prompt()
+        
         # Register event handlers
         self.sio.on('connect', self._on_connect)
         self.sio.on('disconnect', self._on_disconnect)
@@ -142,6 +147,15 @@ class PirateWebSocketClient:
         self.sio.on('audio_complete_fallback', self._on_audio_complete_fallback)
         self.sio.on('audio_error', self._on_audio_error)
         self.sio.on('error', self._on_error)
+    
+    def _load_system_prompt(self) -> str:
+        """Load the system prompt from file."""
+        prompt_file = os.getenv("PROMPT_FILE", "prompt.txt")
+        if not os.path.isfile(prompt_file):
+            print(f"Error: Prompt file '{prompt_file}' not found.")
+            sys.exit(1)
+        with open(prompt_file, 'r', encoding='utf-8') as f:
+            return f.read().strip()
     
     async def _on_connect(self):
         """Handle successful connection."""
@@ -181,6 +195,7 @@ class PirateWebSocketClient:
         
         try:
             audio_data = base64.b64decode(audio_b64)
+            print(f"📦 Chunk {sequence}: {len(audio_data)} bytes, base64: {len(audio_b64)} chars")
             self.audio_player.add_chunk(sequence, audio_data, request_id)
         except Exception as e:
             print(f"❌ Error processing audio chunk: {e}")
@@ -232,9 +247,12 @@ class PirateWebSocketClient:
             "content": message
         })
         
+        # Build full message history with system prompt
+        messages = [{"role": "system", "content": self.system_prompt}] + self.conversation_history
+        
         # Send to server
         await self.sio.emit('chat', {
-            'message': message,
+            'messages': messages,
             'model': self.model
         })
     
@@ -248,9 +266,16 @@ class PirateWebSocketClient:
                 # Get speech input
                 print("\n👂 Listening for speech...")
                 
-                # Run STT in thread to avoid blocking
+                # Run STT in thread with timeout to make it interruptible
                 loop = asyncio.get_event_loop()
-                result = await loop.run_in_executor(None, stt.transcribe)
+                try:
+                    result = await asyncio.wait_for(
+                        loop.run_in_executor(None, stt.transcribe), 
+                        timeout=30.0  # 30 second timeout for each transcription attempt
+                    )
+                except asyncio.TimeoutError:
+                    print("⏰ Transcription timeout, trying again...")
+                    continue
                 
                 if result is None or result[0] is None:
                     print("❌ No valid transcription, trying again...")
@@ -334,12 +359,55 @@ def convert_http_to_ws(api_url: str) -> str:
     
     return ws_url
 
+async def check_health(api_url: str, max_attempts: int = 3, retry_delay: int = 10) -> bool:
+    """Check the health endpoint with retries."""
+    # Parse the URL and construct health endpoint
+    parsed = urlparse(api_url)
+    health_url = f"{parsed.scheme}://{parsed.netloc}/health"
+    
+    print(f"🏥 Checking API health at {health_url}")
+    
+    for attempt in range(1, max_attempts + 1):
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(health_url, timeout=5) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        print(f"✅ API is healthy: {data.get('status', 'OK')}")
+                        return True
+                    else:
+                        print(f"⚠️ Health check failed (attempt {attempt}/{max_attempts}): HTTP {response.status}")
+        except aiohttp.ClientError as e:
+            print(f"⚠️ Health check failed (attempt {attempt}/{max_attempts}): {e}")
+        except asyncio.TimeoutError:
+            print(f"⚠️ Health check timed out (attempt {attempt}/{max_attempts})")
+        except Exception as e:
+            print(f"⚠️ Health check error (attempt {attempt}/{max_attempts}): {e}")
+        
+        if attempt < max_attempts:
+            print(f"⏱️ Waiting {retry_delay} seconds before retry...")
+            await asyncio.sleep(retry_delay)
+    
+    print(f"❌ API health check failed after {max_attempts} attempts")
+    return False
+
+def signal_handler(signum, frame):
+    """Handle Ctrl-C gracefully."""
+    print(f"\n👋 Received signal {signum}, shutting down...")
+    # Force exit if asyncio loop is stuck
+    os._exit(0)
+
 async def main():
     """Main function for WebSocket client."""
     validate_environment()
     
     api_url = os.getenv("API_URL")
     model = os.getenv("LLM_MODEL")
+    
+    # Check API health before connecting
+    if not await check_health(api_url):
+        print("❌ Unable to connect to API server. Please ensure the server is running.")
+        sys.exit(1)
     
     # Convert HTTP URL to WebSocket URL
     ws_url = convert_http_to_ws(api_url)
@@ -360,8 +428,13 @@ async def main():
             
     except KeyboardInterrupt:
         print("\n👋 Goodbye!")
+    except Exception as e:
+        print(f"❌ Unexpected error: {e}")
     finally:
-        await client.disconnect()
+        try:
+            await client.disconnect()
+        except:
+            pass  # Ignore disconnect errors during shutdown
 
 if __name__ == "__main__":
     # Install required packages
@@ -371,4 +444,14 @@ if __name__ == "__main__":
         print("❌ Missing python-socketio. Install with: pip install python-socketio[asyncio_client]")
         sys.exit(1)
     
-    asyncio.run(main())
+    # Set up signal handlers for Ctrl-C
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n👋 Goodbye!")
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        sys.exit(1)
