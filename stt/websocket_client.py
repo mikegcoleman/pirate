@@ -17,6 +17,7 @@ import time
 from urllib.parse import urlparse
 import socketio
 import dotenv
+import aiohttp
 
 import stt
 
@@ -334,12 +335,49 @@ def convert_http_to_ws(api_url: str) -> str:
     
     return ws_url
 
+async def check_health(api_url: str, max_attempts: int = 3, retry_delay: int = 10) -> bool:
+    """Check the health endpoint with retries."""
+    # Parse the URL and construct health endpoint
+    parsed = urlparse(api_url)
+    health_url = f"{parsed.scheme}://{parsed.netloc}/health"
+    
+    print(f"🏥 Checking API health at {health_url}")
+    
+    for attempt in range(1, max_attempts + 1):
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(health_url, timeout=5) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        print(f"✅ API is healthy: {data.get('status', 'OK')}")
+                        return True
+                    else:
+                        print(f"⚠️ Health check failed (attempt {attempt}/{max_attempts}): HTTP {response.status}")
+        except aiohttp.ClientError as e:
+            print(f"⚠️ Health check failed (attempt {attempt}/{max_attempts}): {e}")
+        except asyncio.TimeoutError:
+            print(f"⚠️ Health check timed out (attempt {attempt}/{max_attempts})")
+        except Exception as e:
+            print(f"⚠️ Health check error (attempt {attempt}/{max_attempts}): {e}")
+        
+        if attempt < max_attempts:
+            print(f"⏱️ Waiting {retry_delay} seconds before retry...")
+            await asyncio.sleep(retry_delay)
+    
+    print(f"❌ API health check failed after {max_attempts} attempts")
+    return False
+
 async def main():
     """Main function for WebSocket client."""
     validate_environment()
     
     api_url = os.getenv("API_URL")
     model = os.getenv("LLM_MODEL")
+    
+    # Check API health before connecting
+    if not await check_health(api_url):
+        print("❌ Unable to connect to API server. Please ensure the server is running.")
+        sys.exit(1)
     
     # Convert HTTP URL to WebSocket URL
     ws_url = convert_http_to_ws(api_url)
