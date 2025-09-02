@@ -4,6 +4,9 @@ sounddevice==0.5.2
 python-dotenv==1.1.0
 httpx==0.24.1
 
+# WebSocket client for streaming TTS
+python-socketio[asyncio_client]==5.10.0
+
 # Audio processing
 cffi==1.17.1
 

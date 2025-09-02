@@ -2,6 +2,7 @@ import os
 import json
 import requests
 from flask import Flask, request, jsonify, send_file
+from flask_socketio import SocketIO, emit
 import signal
 import sys
 import tempfile
@@ -13,6 +14,10 @@ import logging
 from datetime import datetime
 from abc import ABC, abstractmethod
 import re
+import threading
+import queue
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Load environment variables first to check TTS provider
 load_dotenv()
@@ -44,6 +49,7 @@ signal.signal(signal.SIGINT, handle_shutdown)
 signal.signal(signal.SIGTERM, handle_shutdown)
 
 app = Flask(__name__)
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
 # GPU detection (only if torch is available)
 try:
@@ -183,6 +189,149 @@ class ElevenLabsTTSProvider(TTSProvider):
         
         return audio_base64
 
+class ElevenLabsStreamingTTSProvider:
+    """ElevenLabs Streaming TTS Provider for WebSocket"""
+    
+    def __init__(self):
+        self.api_key = os.getenv("ELEVENLABS_API_KEY")
+        self.voice_id = os.getenv("ELEVENLABS_VOICE_ID")
+        
+        if not self.api_key or not self.voice_id:
+            raise ValueError("ElevenLabs API key and voice ID must be set for streaming TTS")
+        
+        print(f"✅ ElevenLabs Streaming TTS: Initialized with voice ID {self.voice_id}")
+    
+    def chunk_text(self, text: str, max_chunk_size: int = 100) -> list[str]:
+        """Split text into smaller chunks for faster initial response."""
+        import re
+        sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+        chunks = []
+        current_chunk = ""
+        
+        for sentence in sentences:
+            if current_chunk and len(current_chunk + " " + sentence) > max_chunk_size:
+                chunks.append(current_chunk.strip())
+                current_chunk = sentence
+            else:
+                if current_chunk:
+                    current_chunk += " " + sentence
+                else:
+                    current_chunk = sentence
+        
+        if current_chunk:
+            chunks.append(current_chunk.strip())
+        
+        return chunks
+    
+    def text_to_speech_chunk(self, text: str) -> bytes:
+        """Convert text chunk to MP3 audio data."""
+        url = f"https://api.elevenlabs.io/v1/text-to-speech/{self.voice_id}"
+        
+        headers = {
+            "Accept": "audio/mpeg",
+            "Content-Type": "application/json",
+            "xi-api-key": self.api_key
+        }
+        
+        data = {
+            "text": text,
+            "model_id": "eleven_turbo_v2",
+            "voice_settings": {
+                "stability": 0.4,
+                "similarity_boost": 0.4,
+                "style": 0.0,
+                "use_speaker_boost": False
+            },
+            "optimize_streaming_latency": 4
+        }
+        
+        response = requests.post(url, json=data, headers=headers)
+        
+        if response.status_code != 200:
+            raise Exception(f"ElevenLabs API error: {response.status_code} - {response.text}")
+        
+        return response.content
+    
+    def generate_streaming_audio(self, text: str, socket_id: str, request_id: str):
+        """Generate streaming audio chunks and emit via WebSocket."""
+        try:
+            chunks = self.chunk_text(text)
+            logger.info(f"[{request_id}] 🎵 Split text into {len(chunks)} chunks for streaming")
+            
+            # Emit start signal
+            socketio.emit('audio_start', {
+                'total_chunks': len(chunks),
+                'request_id': request_id
+            }, room=socket_id)
+            
+            if not chunks:
+                socketio.emit('audio_complete', {'request_id': request_id}, room=socket_id)
+                return
+            
+            # Process first chunk immediately for fastest response
+            logger.info(f"[{request_id}] 🚀 Processing first chunk immediately...")
+            first_start = time.time()
+            first_audio = self.text_to_speech_chunk(chunks[0])
+            first_time = time.time() - first_start
+            
+            # Emit first chunk
+            first_audio_b64 = base64.b64encode(first_audio).decode('utf-8')
+            socketio.emit('audio_chunk', {
+                'sequence': 0,
+                'data': first_audio_b64,
+                'request_id': request_id
+            }, room=socket_id)
+            
+            logger.info(f"[{request_id}] ⚡ First chunk ready in {first_time:.2f}s")
+            
+            # Process remaining chunks in parallel if there are more
+            if len(chunks) > 1:
+                def process_chunk(chunk_data):
+                    index, chunk_text = chunk_data
+                    try:
+                        audio_data = self.text_to_speech_chunk(chunk_text)
+                        return (index, audio_data)
+                    except Exception as e:
+                        logger.error(f"[{request_id}] Error processing chunk {index}: {e}")
+                        return (index, None)
+                
+                # Process remaining chunks in parallel
+                with ThreadPoolExecutor(max_workers=3) as executor:
+                    chunk_data = [(i+1, chunk) for i, chunk in enumerate(chunks[1:])]
+                    future_to_index = {
+                        executor.submit(process_chunk, data): data[0] 
+                        for data in chunk_data
+                    }
+                    
+                    # Collect results and emit in order
+                    results = {}
+                    for future in as_completed(future_to_index):
+                        index, audio_data = future.result()
+                        if audio_data:
+                            results[index] = audio_data
+                    
+                    # Emit chunks in sequence order
+                    for i in range(1, len(chunks)):
+                        if i in results:
+                            audio_b64 = base64.b64encode(results[i]).decode('utf-8')
+                            socketio.emit('audio_chunk', {
+                                'sequence': i,
+                                'data': audio_b64,
+                                'request_id': request_id
+                            }, room=socket_id)
+                            logger.info(f"[{request_id}] 📤 Sent chunk {i+1}/{len(chunks)}")
+            
+            # Emit completion signal
+            socketio.emit('audio_complete', {'request_id': request_id}, room=socket_id)
+            logger.info(f"[{request_id}] ✅ Streaming TTS complete")
+            
+        except Exception as e:
+            logger.error(f"[{request_id}] ❌ Streaming TTS error: {e}")
+            socketio.emit('audio_error', {
+                'error': str(e),
+                'request_id': request_id
+            }, room=socket_id)
+
 class FallbackTTSProvider(TTSProvider):
     """Fallback TTS Provider (pre-recorded message)"""
     
@@ -228,9 +377,18 @@ def initialize_tts_provider():
         logger.info("Falling back to Kokoro TTS")
         return KokoroTTSProvider()
 
-# Initialize TTS
+# Initialize TTS providers
 tts_provider = initialize_tts_provider()
 fallback_provider = FallbackTTSProvider()
+
+# Initialize streaming TTS if ElevenLabs credentials are available
+streaming_tts_provider = None
+if os.getenv("ELEVENLABS_API_KEY") and os.getenv("ELEVENLABS_VOICE_ID"):
+    try:
+        streaming_tts_provider = ElevenLabsStreamingTTSProvider()
+    except Exception as e:
+        logger.warning(f"Failed to initialize streaming TTS: {e}")
+        streaming_tts_provider = None
 
 def get_llm_endpoint():
     """Returns the complete LLM API endpoint URL"""
@@ -523,6 +681,96 @@ def generate_sentence_audio(sentence, request_id=None):
             logger.error(f"[{request_id}] Fallback error: {fallback_error}")
             raise Exception(f"All TTS providers failed. Primary: {e}, Fallback: {fallback_error}")
 
+# WebSocket Event Handlers
+@socketio.on('connect')
+def handle_connect():
+    """Handle WebSocket connection"""
+    logger.info(f"🔌 Client connected: {request.sid}")
+    emit('connected', {'status': 'Connected to Pirate API'})
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    """Handle WebSocket disconnection"""
+    logger.info(f"🔌 Client disconnected: {request.sid}")
+
+@socketio.on('chat')
+def handle_chat(data):
+    """Handle chat message with streaming TTS response"""
+    request_id = str(uuid.uuid4())[:8]
+    socket_id = request.sid
+    logger.info(f"[{request_id}] 💬 WebSocket chat from {socket_id}")
+    
+    try:
+        # Validate input
+        if not data or 'message' not in data:
+            emit('error', {'error': 'Missing message in chat data'})
+            return
+        
+        user_message = data['message']
+        model = data.get('model', os.getenv('LLM_MODEL', 'llama3.2:8b-instruct-q4_K_M'))
+        
+        logger.info(f"[{request_id}] 📝 User message: {user_message}")
+        
+        # Build chat request
+        chat_request = {
+            'model': model,
+            'messages': [
+                {'role': 'user', 'content': user_message}
+            ]
+        }
+        
+        # Get LLM response
+        try:
+            logger.info(f"[{request_id}] 🤖 Calling LLM...")
+            response_text = call_llm_api(chat_request, request_id)
+            
+            # Send text response immediately
+            emit('text_response', {
+                'text': response_text,
+                'request_id': request_id
+            })
+            
+            logger.info(f"[{request_id}] 📤 Sent text response: {response_text[:50]}...")
+            
+            # Generate streaming TTS if available
+            if streaming_tts_provider:
+                logger.info(f"[{request_id}] 🎵 Starting streaming TTS...")
+                # Run in background thread to avoid blocking
+                threading.Thread(
+                    target=streaming_tts_provider.generate_streaming_audio,
+                    args=(response_text, socket_id, request_id),
+                    daemon=True
+                ).start()
+            else:
+                # Fallback to regular TTS
+                try:
+                    logger.info(f"[{request_id}] 🎵 Using fallback TTS...")
+                    audio_b64 = generate_sentence_audio(response_text, request_id)
+                    emit('audio_complete_fallback', {
+                        'audio_base64': audio_b64,
+                        'request_id': request_id
+                    })
+                except Exception as tts_error:
+                    logger.error(f"[{request_id}] ❌ Fallback TTS error: {tts_error}")
+                    emit('audio_error', {
+                        'error': 'TTS generation failed',
+                        'request_id': request_id
+                    })
+                    
+        except Exception as llm_error:
+            logger.error(f"[{request_id}] ❌ LLM error: {llm_error}")
+            emit('error', {
+                'error': f'Failed to get response from LLM: {llm_error}',
+                'request_id': request_id
+            })
+            
+    except Exception as e:
+        logger.error(f"[{request_id}] 💥 Chat handler error: {e}")
+        emit('error', {
+            'error': 'Internal server error',
+            'request_id': request_id
+        })
+
 def validate_api_environment():
     """Validate API environment variables and dependencies"""
     errors = []
@@ -569,5 +817,6 @@ if __name__ == '__main__':
     
     print(f"Server starting on http://localhost:{port}")
     print(f"Using LLM endpoint: {get_llm_endpoint()}")
+    print(f"WebSocket streaming TTS: {'✅ Available' if streaming_tts_provider else '❌ Not available'}")
     
-    app.run(host='0.0.0.0', port=port, debug=os.getenv("DEBUG", "false").lower() == "true")
+    socketio.run(app, host='0.0.0.0', port=port, debug=os.getenv("DEBUG", "false").lower() == "true")

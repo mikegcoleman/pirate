@@ -4,3 +4,5 @@ python-dotenv==1.0.0
 kokoro
 soundfile
 elevenlabs
+Flask-SocketIO==5.3.6
+eventlet==0.33.3

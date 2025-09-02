@@ -4,15 +4,26 @@
 A voice-controlled pirate character ("Mr. Bones") that runs as a porch prop. The system captures audio, converts it to text, sends it to an LLM API, gets a response, converts it to speech, and plays it back.
 
 ## Architecture
+
+### HTTP Mode (Original)
 ```
-Voice Input → STT (Vosk) → Frontend (main.py) → API (llm-api) → LLM → TTS → Audio Output
+Voice Input → STT (Vosk) → Frontend (main.py) → HTTP API → LLM → Single TTS → Audio Output
+```
+
+### WebSocket Streaming Mode (New)
+```
+Voice Input → STT (Vosk) → WebSocket Client → WebSocket API → LLM → Streaming TTS → Chunked Audio Stream
+                                     ↓
+Pi5: Sequential chunk playback (no gaps, ~2-3s to first audio)
+Windows: Parallel chunk generation (ElevenLabs API calls)
 ```
 
 ## File Structure
 ```
 pirate/
 ├── stt/                    # Frontend (Speech-to-Text + Audio Playback)
-│   ├── main.py            # Main conversation loop
+│   ├── main.py            # Main conversation loop (HTTP client)
+│   ├── websocket_client.py # WebSocket client with streaming TTS
 │   ├── stt.py             # Speech-to-text module (Vosk)
 │   ├── prompt.txt         # Mr. Bones character prompt
 │   ├── env.example        # Environment template
@@ -20,8 +31,8 @@ pirate/
 │   ├── pi_env            # Raspberry Pi configuration
 │   └── PLATFORM_CONFIG.md # Platform configuration guide
 ├── llm-api/               # Backend API
-│   ├── app.py            # Flask API server with Kokoro TTS
-│   ├── requirements.txt  # Python dependencies (kokoro-onnx, torch)
+│   ├── app.py            # Flask API server with WebSocket + streaming TTS
+│   ├── requirements.txt  # Python dependencies (Flask-SocketIO, elevenlabs, kokoro)
 │   ├── Dockerfile        # Container configuration
 │   ├── compose.yaml      # Docker compose setup (simplified)
 │   ├── env.example       # Environment template
@@ -93,8 +104,17 @@ pirate/
 
 ### Required
 ```bash
-API_URL=http://localhost:8080/api/chat
+API_URL=http://localhost:8080/api/chat  # For HTTP mode
+# OR
+API_URL=http://localhost:8080  # For WebSocket mode (auto-converts to ws://)
 LLM_MODEL=llama3.2:8b-instruct-q4_K_M
+```
+
+### Streaming TTS Configuration (Optional)
+```bash
+ELEVENLABS_API_KEY=sk_...          # ElevenLabs API key for streaming TTS
+ELEVENLABS_VOICE_ID=Myn1LuZgd2...  # Voice ID for character voice
+TTS_PROVIDER=elevenlabs            # Use ElevenLabs for streaming, kokoro for fallback
 ```
 
 ### Audio Configuration
@@ -119,7 +139,17 @@ BLOCKSIZE=8000          # 4000 for Pi, 8000 for Mac/Windows
 
 ## Recent Changes
 
-### Model Comparison Test Restructuring (Current Session)
+### Streaming TTS Implementation (Current Session - streaming-tts branch)
+- ✅ Added WebSocket support to `llm-api/app.py` with Flask-SocketIO
+- ✅ Implemented ElevenLabsStreamingTTSProvider for chunked audio generation
+- ✅ Created `stt/websocket_client.py` for Pi5 WebSocket client with streaming audio playback
+- ✅ Added StreamingAudioPlayer class for queued, sequential audio playback
+- ✅ Updated dependencies: Flask-SocketIO, eventlet, python-socketio[asyncio_client]
+- ✅ Protocol: WebSocket events for text_response, audio_start, audio_chunk, audio_complete
+- 🎯 **Performance Goal**: Reduce time-to-first-audio from ~10s to ~2-3s
+- 🔧 **Architecture**: Windows processes chunks in parallel, Pi5 receives ready-to-play stream
+
+### Model Comparison Test Restructuring (Previous Session)
 - ✅ Restructured `models_list.json` to separate DMR and OpenAI models into `"dmr"` and `"openai"` sections
 - ✅ Updated `model_comparison_test.py` to route requests to correct provider based on model categorization
 - ❌ **BLOCKER**: Windows machine (192.168.50.66:12434) Docker Model Runner not responding - need to start DMR service
@@ -183,10 +213,23 @@ BLOCKSIZE=8000          # 4000 for Pi, 8000 for Mac/Windows
 7. Test with: `curl http://localhost:8080/health`
 
 ### For Frontend Testing:
+
+#### HTTP Mode (Original):
 1. Copy `mac_env` to `stt/.env` for Mac development
-2. Copy `pi_env` to `stt/.env` for Pi deployment
-3. Configure `API_URL` to point to your API
+2. Copy `pi_env` to `stt/.env` for Pi deployment  
+3. Configure `API_URL=http://localhost:8080/api/chat`
 4. Run `python main.py`
+
+#### WebSocket Streaming Mode (New):
+1. Set up environment with ElevenLabs credentials:
+   ```bash
+   API_URL=http://localhost:8080
+   ELEVENLABS_API_KEY=sk_...
+   ELEVENLABS_VOICE_ID=...
+   ```
+2. Install WebSocket dependencies: `pip install python-socketio[asyncio_client]`
+3. Run `python websocket_client.py`
+4. **Expected Performance**: ~2-3s to first audio vs ~10s with HTTP mode
 
 ### For Quick Hardware Testing:
 1. Use `combined/main.py` for fully cloud-dependent testing

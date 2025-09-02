@@ -284,27 +284,27 @@ def remove_nonstandard(text):
     # Only keep letters, numbers, space, and . , ! ? ; ,
     return re.sub(r"[^a-zA-Z0-9\s\.,!\?;:]", "", text)
 
-def play_filler_phrase():
-    """Play a random filler phrase from the ElevenLabs generated audio files.
-    Cycles through filler_01.mp3 to filler_25.mp3 to avoid repetition.
-    """
-    global filler_counter
-    filler_counter += 1
-    if filler_counter > 25:
-        filler_counter = 1
+# def play_filler_phrase():
+#     """Play a random filler phrase from the ElevenLabs generated audio files.
+#     Cycles through filler_01.mp3 to filler_25.mp3 to avoid repetition.
+#     """
+#     global filler_counter
+#     filler_counter += 1
+#     if filler_counter > 25:
+#         filler_counter = 1
     
-    filler_file = f"audio/fillers/filler_{filler_counter:02d}.mp3"
+#     filler_file = f"audio/fillers/filler_{filler_counter:02d}.mp3"
     
-    if os.path.exists(filler_file):
-        try:
-            print(f"🎵 Playing filler phrase: {filler_file}")
-            subprocess.run([AUDIO_PLAYER, filler_file], check=True)
-        except subprocess.CalledProcessError as e:
-            print(f"Error playing filler phrase: {e}")
-        except Exception as e:
-            print(f"Unexpected error playing filler: {e}")
-    else:
-        print(f"Warning: Filler file not found: {filler_file}")
+#     if os.path.exists(filler_file):
+#         try:
+#             print(f"🎵 Playing filler phrase: {filler_file}")
+#             subprocess.run([AUDIO_PLAYER, filler_file], check=True)
+#         except subprocess.CalledProcessError as e:
+#             print(f"Error playing filler phrase: {e}")
+#         except Exception as e:
+#             print(f"Unexpected error playing filler: {e}")
+#     else:
+#         print(f"Warning: Filler file not found: {filler_file}")
 
 
 async def main():
@@ -344,8 +344,8 @@ async def main():
             request_task = asyncio.create_task(send_request(chat_request))
             
             # Natural pause before responding, then play filler phrase
-            await asyncio.sleep(0.3)  # 300ms natural response delay
-            play_filler_phrase()
+            # await asyncio.sleep(0.3)  # 300ms natural response delay
+            # play_filler_phrase()
 
             wait_time = 0
             while not request_task.done():
