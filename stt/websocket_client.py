@@ -142,7 +142,7 @@ class PirateWebSocketClient:
         self.sio.on('connected', self._on_connected)
         self.sio.on('text_response', self._on_text_response)
         self.sio.on('audio_start', self._on_audio_start)
-        self.sio.on('audio_chunk', self._on_audio_chunk)
+        self.sio.on('chunk_data', self._on_audio_chunk)
         self.sio.on('audio_complete', self._on_audio_complete)
         self.sio.on('audio_complete_fallback', self._on_audio_complete_fallback)
         self.sio.on('audio_error', self._on_audio_error)
@@ -153,8 +153,8 @@ class PirateWebSocketClient:
         @self.sio.event
         async def generic_event_handler(event_name, *args):
             print(f"🔍 CLIENT: Generic handler - event='{event_name}', args={len(args) if args else 0}")
-            if event_name == 'audio_chunk':
-                print(f"🚨 CLIENT: Catch-all found audio_chunk! Args: {args}")
+            if event_name == 'chunk_data':
+                print(f"🚨 CLIENT: Catch-all found chunk_data! Args: {args}")
                 # Try to process it here as backup
                 if args:
                     await self._on_audio_chunk(args[0])
@@ -165,7 +165,7 @@ class PirateWebSocketClient:
             if args:
                 await self._on_audio_chunk(args[0])
         
-        self.sio.on('audio_chunk', debug_audio_chunk_handler)
+        self.sio.on('chunk_data', debug_audio_chunk_handler)
         
         print("✅ CLIENT: All WebSocket event handlers registered")
     

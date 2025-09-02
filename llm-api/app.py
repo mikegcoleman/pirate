@@ -308,7 +308,7 @@ class ElevenLabsStreamingTTSProvider:
             # Emit first chunk
             first_audio_b64 = base64.b64encode(first_audio).decode('utf-8')
             logger.info(f"[{request_id}] 📤 Emitting first chunk: seq=0, size={len(first_audio_b64)} chars, to room={socket_id}")
-            socketio.emit('audio_chunk', {
+            socketio.emit('chunk_data', {
                 'sequence': 0,
                 'data': first_audio_b64,
                 'request_id': request_id
@@ -348,7 +348,7 @@ class ElevenLabsStreamingTTSProvider:
                         if i in results:
                             audio_b64 = base64.b64encode(results[i]).decode('utf-8')
                             logger.info(f"[{request_id}] 📤 Emitting chunk: seq={i}, size={len(audio_b64)} chars, to room={socket_id}")
-                            socketio.emit('audio_chunk', {
+                            socketio.emit('chunk_data', {
                                 'sequence': i,
                                 'data': audio_b64,
                                 'request_id': request_id
