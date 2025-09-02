@@ -804,23 +804,37 @@ def handle_chat(data):
     logger.info(f"[{request_id}] 💬 WebSocket chat from {socket_id}")
     
     try:
-        # Validate input
-        if not data or 'message' not in data:
-            emit('error', {'error': 'Missing message in chat data'})
+        # Validate input - support both old and new message formats
+        if not data:
+            emit('error', {'error': 'Missing chat data'})
             return
         
-        user_message = data['message']
         model = data.get('model', os.getenv('LLM_MODEL', 'llama3.2:8b-instruct-q4_K_M'))
         
-        logger.info(f"[{request_id}] 📝 User message: {user_message}")
-        
-        # Build chat request
-        chat_request = {
-            'model': model,
-            'messages': [
-                {'role': 'user', 'content': user_message}
-            ]
-        }
+        # Handle new format with full message history (includes system prompt)
+        if 'messages' in data:
+            messages = data['messages']
+            user_message = messages[-1]['content'] if messages else "No message"
+            logger.info(f"[{request_id}] 📝 User message: {user_message}")
+            
+            chat_request = {
+                'model': model,
+                'messages': messages
+            }
+        # Handle old format with just message
+        elif 'message' in data:
+            user_message = data['message']
+            logger.info(f"[{request_id}] 📝 User message: {user_message}")
+            
+            chat_request = {
+                'model': model,
+                'messages': [
+                    {'role': 'user', 'content': user_message}
+                ]
+            }
+        else:
+            emit('error', {'error': 'Missing message or messages in chat data'})
+            return
         
         # Get LLM response
         try:

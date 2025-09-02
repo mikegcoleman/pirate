@@ -9,7 +9,15 @@
       "Bash(git push:*)",
       "Read(/mnt/c/Users/msmik/Documents/src/pirate/**)",
       "Bash(source:*)",
-      "Bash(venv/Scripts/python.exe generate_fallback.py:*)"
+      "Bash(venv/Scripts/python.exe generate_fallback.py:*)",
+      "Read(/mnt/c/Users/msmik/Documents/src/pirate/stt/**)",
+      "Read(/mnt/c/Users/msmik/Documents/src/pirate/stt/**)",
+      "Read(/mnt/c/Users/msmik/Documents/src/pirate/stt/**)",
+      "Read(/mnt/c/Users/msmik/Documents/src/pirate/stt/**)",
+      "Read(/mnt/c/Users/msmik/Documents/src/pirate/stt/**)",
+      "Read(/mnt/c/Users/msmik/Documents/src/pirate/stt/**)",
+      "Read(/mnt/c/Users/msmik/Documents/src/pirate/stt/**)",
+      "Read(/mnt/c/Users/msmik/Documents/src/pirate/stt/**)"
     ],
     "deny": [],
     "ask": []
