@@ -200,21 +200,31 @@ class PirateWebSocketClient:
     
     async def _on_audio_chunk(self, data):
         """Handle incoming audio chunk."""
-        print(f"🔊 CLIENT: Received audio_chunk event! Data keys: {list(data.keys())}")
-        
-        sequence = data.get('sequence', 0)
-        audio_b64 = data.get('data', '')
-        request_id = data.get('request_id', 'unknown')
-        
-        print(f"🔊 CLIENT: Processing chunk - seq={sequence}, b64_len={len(audio_b64)}, req_id={request_id}")
-        
         try:
+            print(f"🔊 CLIENT: _on_audio_chunk called! Data type: {type(data)}")
+            print(f"🔊 CLIENT: Received audio_chunk event! Data keys: {list(data.keys()) if hasattr(data, 'keys') else 'No keys'}")
+            
+            if not data:
+                print("❌ CLIENT: Empty data received in audio_chunk")
+                return
+            
+            sequence = data.get('sequence', 0)
+            audio_b64 = data.get('data', '')
+            request_id = data.get('request_id', 'unknown')
+            
+            print(f"🔊 CLIENT: Processing chunk - seq={sequence}, b64_len={len(audio_b64)}, req_id={request_id}")
+            
+            if not audio_b64:
+                print(f"❌ CLIENT: Empty base64 data in chunk {sequence}")
+                return
+            
             audio_data = base64.b64decode(audio_b64)
             print(f"📦 Chunk {sequence}: {len(audio_data)} bytes, base64: {len(audio_b64)} chars")
             self.audio_player.add_chunk(sequence, audio_data, request_id)
             print(f"✅ CLIENT: Chunk {sequence} added to audio player")
+            
         except Exception as e:
-            print(f"❌ Error processing audio chunk: {e}")
+            print(f"❌ CRITICAL: Error in _on_audio_chunk: {e}")
             import traceback
             traceback.print_exc()
     
