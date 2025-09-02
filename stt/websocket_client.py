@@ -148,10 +148,12 @@ class PirateWebSocketClient:
         self.sio.on('audio_error', self._on_audio_error)
         self.sio.on('error', self._on_error)
         
-        # Debug: Register a catch-all event handler
-        @self.sio.event
-        async def catch_all_events(*args):
-            print(f"🔍 CLIENT: Received unknown event: {args}")
+        # Debug: Register a catch-all event handler to see ALL events
+        @self.sio.on('*')
+        async def catch_all_events(event, *args):
+            print(f"🔍 CLIENT: Received event '{event}' with args: {len(args) if args else 0}")
+            if event == 'audio_chunk':
+                print(f"🚨 CLIENT: FOUND audio_chunk event! Args: {args}")
         
         print("✅ CLIENT: All WebSocket event handlers registered")
     
@@ -167,6 +169,7 @@ class PirateWebSocketClient:
     async def _on_connect(self):
         """Handle successful connection."""
         print("🔌 Connected to pirate server!")
+        print(f"🔍 CLIENT: My socket ID is: {self.sio.sid}")
     
     async def _on_disconnect(self):
         """Handle disconnection."""
