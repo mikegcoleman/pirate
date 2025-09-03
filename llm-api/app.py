@@ -49,6 +49,7 @@ signal.signal(signal.SIGINT, handle_shutdown)
 signal.signal(signal.SIGTERM, handle_shutdown)
 
 app = Flask(__name__)
+# WebSocket configuration for chunked audio streaming
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
 # GPU detection (only if torch is available)
@@ -248,6 +249,15 @@ class ElevenLabsStreamingTTSProvider:
     
     def text_to_speech_chunk(self, text: str) -> bytes:
         """Convert text chunk to MP3 audio data."""
+        # Check if mock TTS mode is enabled
+        mock_tts_mode = os.getenv('MOCK_TTS_MODE', 'false').lower() == 'true'
+        if mock_tts_mode:
+            # Generate fake audio data (much smaller for WebSocket compatibility)
+            # Limit to ~1KB per chunk to avoid WebSocket size issues
+            fake_audio_size = min(len(text) * 20, 1000)  # Max 1KB chunks
+            fake_audio_data = b'FAKE_AUDIO_' + text.encode('utf-8') + b'_' + b'X' * fake_audio_size
+            return fake_audio_data
+        
         url = f"https://api.elevenlabs.io/v1/text-to-speech/{self.voice_id}"
         
         headers = {
@@ -275,6 +285,40 @@ class ElevenLabsStreamingTTSProvider:
         
         return response.content
     
+    def emit_large_audio_chunk(self, audio_b64: str, sequence: int, socket_id: str, request_id: str, max_chunk_size: int = 200):
+        """Split large base64 audio data into WebSocket-safe chunks and emit them."""
+        # If data is small enough, emit normally
+        if len(audio_b64) <= max_chunk_size:
+            socketio.emit('chunk_data', {
+                'sequence': sequence,
+                'data': audio_b64,
+                'request_id': request_id,
+                'is_complete': True
+            }, room=socket_id)
+            logger.info(f"[{request_id}] ✅ Single chunk emitted: seq={sequence}, size={len(audio_b64)} chars")
+            return
+        
+        # Split large data into smaller chunks
+        chunks = []
+        for i in range(0, len(audio_b64), max_chunk_size):
+            chunk = audio_b64[i:i + max_chunk_size]
+            chunks.append(chunk)
+        
+        logger.info(f"[{request_id}] 📦 Splitting large audio into {len(chunks)} WebSocket chunks (seq={sequence})")
+        
+        # Emit each sub-chunk
+        for i, chunk in enumerate(chunks):
+            is_last = (i == len(chunks) - 1)
+            socketio.emit('chunk_data', {
+                'sequence': sequence,
+                'part': i,
+                'data': chunk,
+                'request_id': request_id,
+                'is_complete': is_last,
+                'total_parts': len(chunks)
+            }, room=socket_id)
+            logger.info(f"[{request_id}] ✅ Sub-chunk emitted: seq={sequence}, part={i}/{len(chunks)}, size={len(chunk)} chars")
+
     def generate_streaming_audio(self, text: str, socket_id: str, request_id: str):
         """Generate streaming audio chunks and emit via WebSocket with ultra-fast first chunk."""
         try:
@@ -305,14 +349,10 @@ class ElevenLabsStreamingTTSProvider:
             first_audio = self.text_to_speech_chunk(first_chunk)
             first_time = time.time() - first_start
             
-            # Emit first chunk
+            # Emit first chunk using chunked transmission
             first_audio_b64 = base64.b64encode(first_audio).decode('utf-8')
             logger.info(f"[{request_id}] 📤 Emitting first chunk: seq=0, size={len(first_audio_b64)} chars, to room={socket_id}")
-            socketio.emit('chunk_data', {
-                'sequence': 0,
-                'data': first_audio_b64,
-                'request_id': request_id
-            }, room=socket_id)
+            self.emit_large_audio_chunk(first_audio_b64, 0, socket_id, request_id)
             logger.info(f"[{request_id}] ✅ First chunk emitted successfully")
             
             logger.info(f"[{request_id}] ⚡ First chunk ready in {first_time:.2f}s")
@@ -348,11 +388,17 @@ class ElevenLabsStreamingTTSProvider:
                         if i in results:
                             audio_b64 = base64.b64encode(results[i]).decode('utf-8')
                             logger.info(f"[{request_id}] 📤 Emitting chunk: seq={i}, size={len(audio_b64)} chars, to room={socket_id}")
-                            socketio.emit('chunk_data', {
-                                'sequence': i,
-                                'data': audio_b64,
+                            
+                            # ALSO emit a simple test chunk to see if the issue is data size
+                            socketio.emit('simple_test', {
+                                'sequence': i, 
+                                'message': f'Simple test chunk {i}',
                                 'request_id': request_id
                             }, room=socket_id)
+                            logger.info(f"[{request_id}] 📡 Simple test chunk {i} emitted")
+                            
+                            # Use chunked transmission for remaining chunks
+                            self.emit_large_audio_chunk(audio_b64, i, socket_id, request_id)
                             logger.info(f"[{request_id}] ✅ Chunk {i+1}/{total_chunks} emitted successfully")
             
             # Emit completion signal
@@ -849,8 +895,14 @@ def handle_chat(data):
         
         # Get LLM response
         try:
-            logger.info(f"[{request_id}] 🤖 Calling LLM...")
-            response_text = call_llm_api(chat_request, request_id)
+            # Check if test mode is enabled
+            test_mode = os.getenv('TEST_MODE', 'false').lower() == 'true'
+            if test_mode:
+                logger.info(f"[{request_id}] 🧪 Test mode - using mock response...")
+                response_text = "Ahoy matey! This be a test response from Mr. Bones to test our audio streaming capabilities!"
+            else:
+                logger.info(f"[{request_id}] 🤖 Calling LLM...")
+                response_text = call_llm_api(chat_request, request_id)
             
             # Send text response immediately
             emit('text_response', {

@@ -148,6 +148,7 @@ class PirateWebSocketClient:
         self.sio.on('audio_error', self._on_audio_error)
         self.sio.on('error', self._on_error)
         self.sio.on('test_event', self._on_test_event)
+        self.sio.on('simple_test', self._on_simple_test)
         
         # Debug: Register a catch-all event handler to see ALL events
         @self.sio.event

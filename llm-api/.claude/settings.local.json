@@ -17,7 +17,10 @@
       "Read(/mnt/c/Users/msmik/Documents/src/pirate/stt/**)",
       "Read(/mnt/c/Users/msmik/Documents/src/pirate/stt/**)",
       "Read(/mnt/c/Users/msmik/Documents/src/pirate/stt/**)",
-      "Read(/mnt/c/Users/msmik/Documents/src/pirate/stt/**)"
+      "Read(/mnt/c/Users/msmik/Documents/src/pirate/stt/**)",
+      "Bash(pip install:*)",
+      "Bash(curl:*)",
+      "Bash(ss:*)"
     ],
     "deny": [],
     "ask": []
