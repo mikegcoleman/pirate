@@ -14,7 +14,8 @@
       "Bash(git log:*)",
       "Bash(git pull:*)",
       "Bash(curl:*)",
-      "WebFetch(domain:elevenlabs.io)"
+      "WebFetch(domain:elevenlabs.io)",
+      "Bash(git stash:*)"
     ],
     "deny": [],
     "ask": []

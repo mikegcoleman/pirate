@@ -173,6 +173,7 @@ class PirateWebSocketClient:
         self.sio.on('chunk_data', self._on_chunk_data)
         self.sio.on('audio_complete', self._on_audio_complete)
         self.sio.on('audio_complete_fallback', self._on_audio_complete_fallback)
+        self.sio.on('audio_fallback_part', self._on_audio_fallback_part)
         self.sio.on('audio_error', self._on_audio_error)
         self.sio.on('error', self._on_error)
         self.sio.on('test_event', self._on_test_event)
@@ -333,6 +334,46 @@ class PirateWebSocketClient:
         self.audio_playing = False
         self.waiting_for_response = False
         print(f"✅ [{request_id}] Fallback audio playback complete")
+    
+    async def _on_audio_fallback_part(self, data):
+        """Handle multi-part fallback audio."""
+        chunk_data = data.get('data', '')
+        part = data.get('part', 0)
+        total_parts = data.get('total_parts', 1)
+        is_complete = data.get('is_complete', False)
+        request_id = data.get('request_id', 'unknown')
+        
+        print(f"📦 [{request_id}] Received fallback part {part+1}/{total_parts}")
+        
+        # Initialize fallback assembly if needed
+        if not hasattr(self, 'fallback_parts'):
+            self.fallback_parts = {}
+        
+        fallback_key = request_id
+        if fallback_key not in self.fallback_parts:
+            self.fallback_parts[fallback_key] = {'parts': {}, 'total_parts': total_parts}
+        
+        # Store this part
+        self.fallback_parts[fallback_key]['parts'][part] = chunk_data
+        
+        # Check if we have all parts
+        if len(self.fallback_parts[fallback_key]['parts']) == total_parts:
+            # Reassemble the complete audio
+            complete_audio = ''
+            for i in range(total_parts):
+                complete_audio += self.fallback_parts[fallback_key]['parts'][i]
+            
+            # Clean up
+            del self.fallback_parts[fallback_key]
+            
+            print(f"🔊 [{request_id}] Playing reassembled fallback audio...")
+            self.audio_playing = True
+            # Play audio and wait for completion
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, self.audio_player.play_single_audio, complete_audio)
+            self.audio_playing = False
+            self.waiting_for_response = False
+            print(f"✅ [{request_id}] Reassembled fallback audio playback complete")
     
     async def _on_audio_error(self, data):
         """Handle audio generation error."""

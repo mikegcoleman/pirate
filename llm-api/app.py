@@ -433,13 +433,36 @@ class ElevenLabsStreamingTTSProvider:
                     if i in results:
                         combined_audio += results[i]
             
-            # Send as single fallback audio
+            # Send as fallback audio, but split if too large
             combined_b64 = base64.b64encode(combined_audio).decode('utf-8')
-            socketio.emit('audio_complete_fallback', {
-                'audio_base64': combined_b64,
-                'request_id': request_id
-            }, room=socket_id)
-            logger.info(f"[{request_id}] ✅ Sent complete audio as fallback: {len(combined_b64)} chars")
+            
+            # If audio is small enough, send as single message
+            if len(combined_b64) <= 32000:
+                socketio.emit('audio_complete_fallback', {
+                    'audio_base64': combined_b64,
+                    'request_id': request_id
+                }, room=socket_id)
+                logger.info(f"[{request_id}] ✅ Sent complete audio as fallback: {len(combined_b64)} chars")
+            else:
+                # Split into multiple parts
+                chunk_size = 32000
+                total_parts = (len(combined_b64) + chunk_size - 1) // chunk_size
+                
+                logger.info(f"[{request_id}] 📦 Splitting fallback audio into {total_parts} parts")
+                
+                for part in range(total_parts):
+                    start = part * chunk_size
+                    end = min(start + chunk_size, len(combined_b64))
+                    chunk = combined_b64[start:end]
+                    
+                    socketio.emit('audio_fallback_part', {
+                        'data': chunk,
+                        'part': part,
+                        'total_parts': total_parts,
+                        'is_complete': (part == total_parts - 1),
+                        'request_id': request_id
+                    }, room=socket_id)
+                    logger.info(f"[{request_id}] ✅ Sent fallback part {part+1}/{total_parts}: {len(chunk)} chars")
             
         except Exception as e:
             logger.error(f"[{request_id}] ❌ Streaming TTS error: {e}")
