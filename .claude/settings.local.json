@@ -13,7 +13,8 @@
       "WebSearch",
       "Bash(git log:*)",
       "Bash(git pull:*)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "WebFetch(domain:elevenlabs.io)"
     ],
     "deny": [],
     "ask": []

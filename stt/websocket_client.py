@@ -270,6 +270,12 @@ class PirateWebSocketClient:
         request_id = data.get('request_id', 'unknown')
         print(f"🧪 [{request_id}] TEST EVENT RECEIVED: {message}")
     
+    async def _on_simple_test(self, data):
+        """Handle simple test event for debugging."""
+        message = data.get('message', 'No message')
+        request_id = data.get('request_id', 'unknown')
+        print(f"🧪 [{request_id}] SIMPLE TEST EVENT RECEIVED: {message}")
+    
     async def connect(self):
         """Connect to the WebSocket server."""
         try:
