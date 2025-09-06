@@ -59,27 +59,52 @@ class StreamingAudioPlayer:
                 # Check if we have the next expected chunk
                 if self.next_sequence in self.chunks_received:
                     audio_data = self.chunks_received.pop(self.next_sequence)
+                    print(f"🔊 Playing chunk {self.next_sequence + 1}/{self.total_chunks}")
                     self._play_audio_chunk(audio_data)
                     self.next_sequence += 1
-                    print(f"🔊 Played chunk {self.next_sequence}/{self.total_chunks}")
+                    print(f"✅ Completed chunk {self.next_sequence}/{self.total_chunks}")
+                    
+                    # Check if we're done
+                    if self.next_sequence >= self.total_chunks:
+                        print(f"✅ All chunks played!")
+                        break
                 else:
                     # Wait a bit for the next chunk
                     time.sleep(0.1)
                     
             except Exception as e:
                 print(f"❌ Error in playback worker: {e}")
+                import traceback
+                traceback.print_exc()
     
     def _play_audio_chunk(self, audio_data: bytes):
         """Play a single audio chunk."""
+        # Validate that we have actual audio data
+        if not audio_data or len(audio_data) < 100:  # MP3 files should be at least 100 bytes
+            print(f"⚠️ Skipping invalid audio chunk: {len(audio_data)} bytes")
+            return
+        
+        # Check for basic MP3 header (starts with ID3 or 0xFF 0xFB)
+        if not (audio_data[:3] == b'ID3' or (len(audio_data) >= 2 and audio_data[0] == 0xFF and (audio_data[1] & 0xE0) == 0xE0)):
+            print(f"⚠️ Skipping non-MP3 data: {audio_data[:10].hex()}")
+            return
+            
         with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as temp_file:
             temp_file.write(audio_data)
+            temp_file.flush()  # Ensure data is written to disk
             temp_filename = temp_file.name
         
         try:
-            subprocess.run([self.audio_player, temp_filename], 
-                          capture_output=True, check=True)
+            result = subprocess.run([self.audio_player, temp_filename], 
+                                  capture_output=True, timeout=10)
+            if result.returncode != 0:
+                print(f"❌ Audio playback failed: {result.stderr.decode() if result.stderr else 'Unknown error'}")
+        except subprocess.TimeoutExpired:
+            print("⏰ Audio playback timeout")
         except subprocess.CalledProcessError as e:
             print(f"❌ Audio playback error: {e}")
+        except Exception as e:
+            print(f"❌ Unexpected playback error: {e}")
         finally:
             try:
                 os.unlink(temp_filename)
@@ -133,6 +158,8 @@ class PirateWebSocketClient:
         self.audio_player = StreamingAudioPlayer(AUDIO_PLAYER)
         self.conversation_history = []
         self.audio_playing = False
+        self.waiting_for_response = False
+        self.partial_chunks = {}  # For assembling multi-part chunks
         
         # Load system prompt
         self.system_prompt = self._load_system_prompt()
@@ -143,7 +170,7 @@ class PirateWebSocketClient:
         self.sio.on('connected', self._on_connected)
         self.sio.on('text_response', self._on_text_response)
         self.sio.on('audio_start', self._on_audio_start)
-        self.sio.on('chunk_data', self._on_audio_chunk)
+        self.sio.on('chunk_data', self._on_chunk_data)
         self.sio.on('audio_complete', self._on_audio_complete)
         self.sio.on('audio_complete_fallback', self._on_audio_complete_fallback)
         self.sio.on('audio_error', self._on_audio_error)
@@ -154,20 +181,15 @@ class PirateWebSocketClient:
         # Debug: Register a catch-all event handler to see ALL events
         @self.sio.event
         async def generic_event_handler(event_name, *args):
-            print(f"🔍 CLIENT: Generic handler - event='{event_name}', args={len(args) if args else 0}")
+            print(f"🔍 CLIENT: Received event '{event_name}' with {len(args) if args else 0} args")
+            if args and len(args) > 0:
+                print(f"🔍 CLIENT: First arg type: {type(args[0])}, content preview: {str(args[0])[:200]}...")
+                
+            # If it's chunk_data and our dedicated handler isn't working, process it here
             if event_name == 'chunk_data':
-                print(f"🚨 CLIENT: Catch-all found chunk_data! Args: {args}")
-                # Try to process it here as backup
-                if args:
+                print(f"🚨 CLIENT: MANUAL chunk_data processing via catch-all!")
+                if args and len(args) > 0:
                     await self._on_audio_chunk(args[0])
-                    
-        # Also try registering with different method
-        async def debug_audio_chunk_handler(*args):
-            print(f"🔍 DEBUG: Alternative audio_chunk handler called with {len(args)} args")
-            if args:
-                await self._on_audio_chunk(args[0])
-        
-        self.sio.on('chunk_data', debug_audio_chunk_handler)
         
         print("✅ CLIENT: All WebSocket event handlers registered")
     
@@ -212,6 +234,11 @@ class PirateWebSocketClient:
         self.audio_playing = True
         self.audio_player.start_stream(request_id, total_chunks)
     
+    async def _on_chunk_data(self, data):
+        """Handle chunk_data events specifically."""
+        print(f"📡 CLIENT: Received chunk_data event! Data: {data}")
+        await self._on_audio_chunk(data)
+    
     async def _on_audio_chunk(self, data):
         """Handle incoming audio chunk."""
         try:
@@ -223,19 +250,63 @@ class PirateWebSocketClient:
                 return
             
             sequence = data.get('sequence', 0)
-            audio_b64 = data.get('data', '')
             request_id = data.get('request_id', 'unknown')
+            chunk_data = data.get('data', '')
             
-            print(f"🔊 CLIENT: Processing chunk - seq={sequence}, b64_len={len(audio_b64)}, req_id={request_id}")
+            # Check if this is a multi-part chunk
+            if 'part' in data:
+                part = data.get('part', 0)
+                total_parts = data.get('total_parts', 1)
+                is_complete = data.get('is_complete', False)
+                
+                print(f"🔊 CLIENT: Multi-part chunk - seq={sequence}, part={part}/{total_parts}, complete={is_complete}")
+                
+                # Initialize chunk assembly if needed
+                chunk_key = f"{request_id}_{sequence}"
+                if chunk_key not in self.partial_chunks:
+                    self.partial_chunks[chunk_key] = {'parts': {}, 'total_parts': total_parts}
+                
+                # Store this part
+                self.partial_chunks[chunk_key]['parts'][part] = chunk_data
+                
+                # Check if we have all parts
+                if len(self.partial_chunks[chunk_key]['parts']) == total_parts:
+                    # Reassemble the complete base64 data
+                    audio_b64 = ''
+                    for i in range(total_parts):
+                        audio_b64 += self.partial_chunks[chunk_key]['parts'][i]
+                    
+                    # Clean up partial data
+                    del self.partial_chunks[chunk_key]
+                    
+                    print(f"🔊 CLIENT: Reassembled chunk {sequence}: {len(audio_b64)} chars")
+                else:
+                    print(f"🔊 CLIENT: Partial chunk stored: {len(self.partial_chunks[chunk_key]['parts'])}/{total_parts} parts")
+                    return  # Wait for more parts
+                    
+            else:
+                # Single-part chunk
+                audio_b64 = chunk_data
+                print(f"🔊 CLIENT: Single-part chunk - seq={sequence}, b64_len={len(audio_b64)}")
             
             if not audio_b64:
                 print(f"❌ CLIENT: Empty base64 data in chunk {sequence}")
                 return
             
-            audio_data = base64.b64decode(audio_b64)
-            print(f"📦 Chunk {sequence}: {len(audio_data)} bytes, base64: {len(audio_b64)} chars")
-            self.audio_player.add_chunk(sequence, audio_data, request_id)
-            print(f"✅ CLIENT: Chunk {sequence} added to audio player")
+            try:
+                audio_data = base64.b64decode(audio_b64)
+                print(f"📦 Chunk {sequence}: {len(audio_data)} bytes, base64: {len(audio_b64)} chars")
+                
+                # Basic validation of decoded data
+                if len(audio_data) > 0:
+                    self.audio_player.add_chunk(sequence, audio_data, request_id)
+                    print(f"✅ CLIENT: Chunk {sequence} added to audio player")
+                else:
+                    print(f"⚠️ CLIENT: Empty chunk {sequence} - skipping")
+                    
+            except Exception as decode_error:
+                print(f"❌ CLIENT: Failed to decode chunk {sequence}: {decode_error}")
+                return
             
         except Exception as e:
             print(f"❌ CRITICAL: Error in _on_audio_chunk: {e}")
@@ -247,6 +318,7 @@ class PirateWebSocketClient:
         request_id = data.get('request_id', 'unknown')
         self.audio_player.complete_stream(request_id)
         self.audio_playing = False
+        self.waiting_for_response = False
     
     async def _on_audio_complete_fallback(self, data):
         """Handle fallback audio (single file)."""
@@ -259,6 +331,7 @@ class PirateWebSocketClient:
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, self.audio_player.play_single_audio, audio_b64)
         self.audio_playing = False
+        self.waiting_for_response = False
         print(f"✅ [{request_id}] Fallback audio playback complete")
     
     async def _on_audio_error(self, data):
@@ -266,12 +339,14 @@ class PirateWebSocketClient:
         error = data.get('error', 'Unknown audio error')
         request_id = data.get('request_id', 'unknown')
         print(f"❌ [{request_id}] Audio error: {error}")
+        self.waiting_for_response = False
     
     async def _on_error(self, data):
         """Handle general errors."""
         error = data.get('error', 'Unknown error')
         request_id = data.get('request_id', 'unknown')
         print(f"❌ [{request_id}] Server error: {error}")
+        self.waiting_for_response = False
     
     async def _on_test_event(self, data):
         """Handle test event for debugging."""
@@ -301,6 +376,9 @@ class PirateWebSocketClient:
     async def send_message(self, message: str):
         """Send a chat message to the server."""
         print(f"📤 Sending: {message}")
+        
+        # Mark that we're waiting for a response
+        self.waiting_for_response = True
         
         # Add to conversation history
         self.conversation_history.append({
@@ -349,10 +427,19 @@ class PirateWebSocketClient:
                 if text.strip():
                     await self.send_message(text)
                     
-                    # Wait for audio playback to complete before listening again
+                    # Wait for complete response (both text and audio) before listening again
                     print("⏳ Waiting for Mr. Bones to finish speaking...")
-                    while self.audio_playing:
+                    timeout_counter = 0
+                    max_timeout = 300  # 30 seconds timeout (300 * 0.1s)
+                    while (self.waiting_for_response or self.audio_playing) and timeout_counter < max_timeout:
                         await asyncio.sleep(0.1)
+                        timeout_counter += 1
+                    
+                    if timeout_counter >= max_timeout:
+                        print("⏰ Response timeout - continuing...")
+                        self.waiting_for_response = False
+                        self.audio_playing = False
+                    
                     print("✅ Ready for next question!")
                     
             except KeyboardInterrupt:
