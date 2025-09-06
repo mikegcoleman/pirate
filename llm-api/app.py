@@ -285,7 +285,7 @@ class ElevenLabsStreamingTTSProvider:
         
         return response.content
     
-    def emit_large_audio_chunk(self, audio_b64: str, sequence: int, socket_id: str, request_id: str, max_chunk_size: int = 50000):
+    def emit_large_audio_chunk(self, audio_b64: str, sequence: int, socket_id: str, request_id: str, max_chunk_size: int = 200):
         """Split large base64 audio data into WebSocket-safe chunks and emit them."""
         # If data is small enough, emit normally
         if len(audio_b64) <= max_chunk_size:
