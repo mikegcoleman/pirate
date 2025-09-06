@@ -423,9 +423,23 @@ class ElevenLabsStreamingTTSProvider:
             else:
                 logger.info(f"[{request_id}] ✅ Single chunk response - no additional processing needed")
             
-            # Emit completion signal
-            socketio.emit('audio_complete', {'request_id': request_id}, room=socket_id)
-            logger.info(f"[{request_id}] ✅ Streaming TTS complete")
+            # Skip streaming entirely - combine all audio and send as fallback
+            logger.info(f"[{request_id}] 🔄 Combining all chunks into single audio file...")
+            combined_audio = first_audio  # Start with first chunk
+            
+            # Add all remaining chunks
+            if remaining_chunks:
+                for i in range(1, total_chunks):
+                    if i in results:
+                        combined_audio += results[i]
+            
+            # Send as single fallback audio
+            combined_b64 = base64.b64encode(combined_audio).decode('utf-8')
+            socketio.emit('audio_complete_fallback', {
+                'audio_base64': combined_b64,
+                'request_id': request_id
+            }, room=socket_id)
+            logger.info(f"[{request_id}] ✅ Sent complete audio as fallback: {len(combined_b64)} chars")
             
         except Exception as e:
             logger.error(f"[{request_id}] ❌ Streaming TTS error: {e}")
