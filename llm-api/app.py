@@ -285,7 +285,7 @@ class ElevenLabsStreamingTTSProvider:
         
         return response.content
     
-    def emit_large_audio_chunk(self, audio_b64: str, sequence: int, socket_id: str, request_id: str, max_chunk_size: int = 200):
+    def emit_large_audio_chunk(self, audio_b64: str, sequence: int, socket_id: str, request_id: str, max_chunk_size: int = 50000):
         """Split large base64 audio data into WebSocket-safe chunks and emit them."""
         # If data is small enough, emit normally
         if len(audio_b64) <= max_chunk_size:
@@ -345,15 +345,28 @@ class ElevenLabsStreamingTTSProvider:
             
             # Process first chunk immediately for fastest response
             logger.info(f"[{request_id}] 🚀 Processing first chunk immediately (ultra-fast)...")
+            logger.info(f"[{request_id}] 🔤 First chunk text: '{first_chunk}'")
             first_start = time.time()
-            first_audio = self.text_to_speech_chunk(first_chunk)
-            first_time = time.time() - first_start
             
-            # Emit first chunk using chunked transmission
-            first_audio_b64 = base64.b64encode(first_audio).decode('utf-8')
-            logger.info(f"[{request_id}] 📤 Emitting first chunk: seq=0, size={len(first_audio_b64)} chars, to room={socket_id}")
-            self.emit_large_audio_chunk(first_audio_b64, 0, socket_id, request_id)
-            logger.info(f"[{request_id}] ✅ First chunk emitted successfully")
+            try:
+                first_audio = self.text_to_speech_chunk(first_chunk)
+                first_time = time.time() - first_start
+                logger.info(f"[{request_id}] ✅ First chunk TTS successful: {len(first_audio)} bytes in {first_time:.2f}s")
+                
+                # Emit first chunk using chunked transmission
+                first_audio_b64 = base64.b64encode(first_audio).decode('utf-8')
+                logger.info(f"[{request_id}] 📤 Emitting first chunk: seq=0, size={len(first_audio_b64)} chars, to room={socket_id}")
+                self.emit_large_audio_chunk(first_audio_b64, 0, socket_id, request_id)
+                logger.info(f"[{request_id}] ✅ First chunk emitted successfully")
+                
+            except Exception as e:
+                logger.error(f"[{request_id}] ❌ First chunk TTS FAILED: {e}")
+                # Send error to client
+                socketio.emit('audio_error', {
+                    'error': f'TTS generation failed: {str(e)}',
+                    'request_id': request_id
+                }, room=socket_id)
+                return  # Stop processing if TTS fails
             
             logger.info(f"[{request_id}] ⚡ First chunk ready in {first_time:.2f}s")
             
@@ -369,6 +382,7 @@ class ElevenLabsStreamingTTSProvider:
                         return (index, None)
                 
                 # Process remaining chunks in parallel
+                logger.info(f"[{request_id}] 🔄 Processing {len(remaining_chunks)} remaining chunks...")
                 with ThreadPoolExecutor(max_workers=3) as executor:
                     chunk_data = [(i+1, chunk) for i, chunk in enumerate(remaining_chunks)]
                     future_to_index = {
@@ -378,28 +392,36 @@ class ElevenLabsStreamingTTSProvider:
                     
                     # Collect results and emit in order
                     results = {}
+                    errors = []
                     for future in as_completed(future_to_index):
                         index, audio_data = future.result()
                         if audio_data:
                             results[index] = audio_data
+                            logger.info(f"[{request_id}] ✅ Chunk {index} TTS completed: {len(audio_data)} bytes")
+                        else:
+                            errors.append(index)
+                            logger.error(f"[{request_id}] ❌ Chunk {index} TTS FAILED")
                     
                     # Emit chunks in sequence order
                     for i in range(1, total_chunks):
                         if i in results:
-                            audio_b64 = base64.b64encode(results[i]).decode('utf-8')
-                            logger.info(f"[{request_id}] 📤 Emitting chunk: seq={i}, size={len(audio_b64)} chars, to room={socket_id}")
-                            
-                            # ALSO emit a simple test chunk to see if the issue is data size
-                            socketio.emit('simple_test', {
-                                'sequence': i, 
-                                'message': f'Simple test chunk {i}',
-                                'request_id': request_id
-                            }, room=socket_id)
-                            logger.info(f"[{request_id}] 📡 Simple test chunk {i} emitted")
-                            
-                            # Use chunked transmission for remaining chunks
-                            self.emit_large_audio_chunk(audio_b64, i, socket_id, request_id)
-                            logger.info(f"[{request_id}] ✅ Chunk {i+1}/{total_chunks} emitted successfully")
+                            try:
+                                audio_b64 = base64.b64encode(results[i]).decode('utf-8')
+                                logger.info(f"[{request_id}] 📤 Emitting chunk: seq={i}, size={len(audio_b64)} chars, to room={socket_id}")
+                                
+                                # Use chunked transmission for remaining chunks
+                                self.emit_large_audio_chunk(audio_b64, i, socket_id, request_id)
+                                logger.info(f"[{request_id}] ✅ Chunk {i+1}/{total_chunks} emitted successfully")
+                            except Exception as e:
+                                logger.error(f"[{request_id}] ❌ Failed to emit chunk {i}: {e}")
+                        else:
+                            logger.warning(f"[{request_id}] ⚠️ Skipping missing chunk {i}")
+                    
+                    if errors:
+                        logger.warning(f"[{request_id}] ⚠️ {len(errors)} chunks failed TTS generation")
+            
+            else:
+                logger.info(f"[{request_id}] ✅ Single chunk response - no additional processing needed")
             
             # Emit completion signal
             socketio.emit('audio_complete', {'request_id': request_id}, room=socket_id)
