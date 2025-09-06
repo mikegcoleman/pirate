@@ -142,12 +142,16 @@ BLOCKSIZE=8000          # 4000 for Pi, 8000 for Mac/Windows
 ### Streaming TTS Implementation (Current Session - streaming-tts branch)
 - ✅ Added WebSocket support to `llm-api/app.py` with Flask-SocketIO
 - ✅ Implemented ElevenLabsStreamingTTSProvider for chunked audio generation
-- ✅ Created `stt/websocket_client.py` for Pi5 WebSocket client with streaming audio playback
+- ✅ Created `stt/websocket_client.py` for WebSocket client with streaming audio playback
 - ✅ Added StreamingAudioPlayer class for queued, sequential audio playback
 - ✅ Updated dependencies: Flask-SocketIO, eventlet, python-socketio[asyncio_client]
 - ✅ Protocol: WebSocket events for text_response, audio_start, audio_chunk, audio_complete
+- ✅ Fixed missing `_on_simple_test` method in websocket_client.py
+- ✅ Added audio playback synchronization - client waits for audio completion before listening
+- ✅ Removed Kokoro TTS fallback - ElevenLabs only (no acceptable voice quality compromise)
+- ✅ Disabled test modes (TEST_MODE=false, MOCK_TTS_MODE=false) for real ElevenLabs TTS
 - 🎯 **Performance Goal**: Reduce time-to-first-audio from ~10s to ~2-3s
-- 🔧 **Architecture**: Windows processes chunks in parallel, Pi5 receives ready-to-play stream
+- 🔧 **Architecture**: Windows processes chunks in parallel, client receives ready-to-play stream
 
 ### Model Comparison Test Restructuring (Previous Session)
 - ✅ Restructured `models_list.json` to separate DMR and OpenAI models into `"dmr"` and `"openai"` sections
@@ -182,9 +186,11 @@ BLOCKSIZE=8000          # 4000 for Pi, 8000 for Mac/Windows
 
 ### Frontend (stt/)
 - ✅ STT confidence checking
-- ✅ Audio file management
+- ✅ Audio file management  
 - ✅ Environment validation
 - ✅ Platform-agnostic configuration
+- ✅ WebSocket client with streaming audio playback
+- ✅ Audio playback synchronization (waits for completion before listening)
 - ❌ Conversation timer (pending)
 
 ### Backend (llm-api/)
@@ -192,14 +198,15 @@ BLOCKSIZE=8000          # 4000 for Pi, 8000 for Mac/Windows
 - ✅ Request validation
 - ✅ Response validation
 - ✅ Startup validation
-- ✅ Kokoro TTS integration with GPU acceleration
+- ✅ WebSocket support with Flask-SocketIO
+- ✅ ElevenLabs streaming TTS integration
 - ✅ Health check endpoint
 - ✅ Comprehensive documentation
 - ✅ Environment template
 - ✅ Simplified Docker configuration
-- ✅ Automatic TTS model downloading
 - ✅ Windows file handling fixes
 - ✅ Docker Model Runner integration
+- ✅ ElevenLabs-only TTS (no Kokoro fallback)
 
 ## Development Workflow
 
@@ -220,16 +227,22 @@ BLOCKSIZE=8000          # 4000 for Pi, 8000 for Mac/Windows
 3. Configure `API_URL=http://localhost:8080/api/chat`
 4. Run `python main.py`
 
-#### WebSocket Streaming Mode (New):
-1. Set up environment with ElevenLabs credentials:
+#### WebSocket Streaming Mode (Current):
+1. Set up environment (ElevenLabs credentials NOT needed on client):
    ```bash
-   API_URL=http://localhost:8080
-   ELEVENLABS_API_KEY=sk_...
-   ELEVENLABS_VOICE_ID=...
+   API_URL=http://localhost:8080  # Client only needs server URL
    ```
 2. Install WebSocket dependencies: `pip install python-socketio[asyncio_client]`
-3. Run `python websocket_client.py`
-4. **Expected Performance**: ~2-3s to first audio vs ~10s with HTTP mode
+3. Ensure backend has ElevenLabs credentials in `llm-api/.env`:
+   ```bash
+   ELEVENLABS_API_KEY=sk_4af0df5606de4139c6ce72cb06d02eb5a4eea566bca9afc8
+   ELEVENLABS_VOICE_ID=Myn1LuZgd2qPMOg9BNtC
+   TEST_MODE=false
+   MOCK_TTS_MODE=false
+   ```
+4. Run `python websocket_client.py`
+5. **Expected Performance**: ~2-3s to first audio vs ~10s with HTTP mode
+6. **Audio Behavior**: Client waits for audio completion before listening again
 
 ### For Quick Hardware Testing:
 1. Use `combined/main.py` for fully cloud-dependent testing
