@@ -132,6 +132,7 @@ class PirateWebSocketClient:
         self.sio = socketio.AsyncClient()
         self.audio_player = StreamingAudioPlayer(AUDIO_PLAYER)
         self.conversation_history = []
+        self.audio_playing = False
         
         # Load system prompt
         self.system_prompt = self._load_system_prompt()
@@ -208,6 +209,7 @@ class PirateWebSocketClient:
         """Handle start of audio stream."""
         total_chunks = data.get('total_chunks', 0)
         request_id = data.get('request_id', 'unknown')
+        self.audio_playing = True
         self.audio_player.start_stream(request_id, total_chunks)
     
     async def _on_audio_chunk(self, data):
@@ -244,13 +246,20 @@ class PirateWebSocketClient:
         """Handle completion of audio stream."""
         request_id = data.get('request_id', 'unknown')
         self.audio_player.complete_stream(request_id)
+        self.audio_playing = False
     
     async def _on_audio_complete_fallback(self, data):
         """Handle fallback audio (single file)."""
         audio_b64 = data.get('audio_base64', '')
         request_id = data.get('request_id', 'unknown')
         print(f"🔊 [{request_id}] Playing fallback audio...")
-        self.audio_player.play_single_audio(audio_b64)
+        
+        self.audio_playing = True
+        # Play audio and wait for completion
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, self.audio_player.play_single_audio, audio_b64)
+        self.audio_playing = False
+        print(f"✅ [{request_id}] Fallback audio playback complete")
     
     async def _on_audio_error(self, data):
         """Handle audio generation error."""
@@ -339,6 +348,12 @@ class PirateWebSocketClient:
                 
                 if text.strip():
                     await self.send_message(text)
+                    
+                    # Wait for audio playback to complete before listening again
+                    print("⏳ Waiting for Mr. Bones to finish speaking...")
+                    while self.audio_playing:
+                        await asyncio.sleep(0.1)
+                    print("✅ Ready for next question!")
                     
             except KeyboardInterrupt:
                 print("\n👋 Shutting down...")

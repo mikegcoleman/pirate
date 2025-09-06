@@ -922,20 +922,12 @@ def handle_chat(data):
                     daemon=True
                 ).start()
             else:
-                # Fallback to regular TTS
-                try:
-                    logger.info(f"[{request_id}] 🎵 Using fallback TTS...")
-                    audio_b64 = generate_sentence_audio(response_text, request_id)
-                    emit('audio_complete_fallback', {
-                        'audio_base64': audio_b64,
-                        'request_id': request_id
-                    })
-                except Exception as tts_error:
-                    logger.error(f"[{request_id}] ❌ Fallback TTS error: {tts_error}")
-                    emit('audio_error', {
-                        'error': 'TTS generation failed',
-                        'request_id': request_id
-                    })
+                # No streaming TTS available - send error
+                logger.error(f"[{request_id}] ❌ No streaming TTS provider configured")
+                emit('audio_error', {
+                    'error': 'No streaming TTS provider available. ElevenLabs credentials required.',
+                    'request_id': request_id
+                })
                     
         except Exception as llm_error:
             logger.error(f"[{request_id}] ❌ LLM error: {llm_error}")
