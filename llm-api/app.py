@@ -1,7 +1,7 @@
 import os
 import json
 import requests
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, Response
 import signal
 import sys
 import tempfile
@@ -194,6 +194,100 @@ def chat_api():
         logger.error(f"[{request_id}] 💥 Unexpected error in chat_api: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
+@app.route('/api/chat/stream', methods=['POST'])
+def chat_stream_api():
+    """Processes streaming chat API requests with chunked audio"""
+    request_id = str(uuid.uuid4())[:8]
+    logger.info(f"[{request_id}] 📥 Received streaming chat request from {request.remote_addr}")
+    
+    try:
+        # Validate request
+        if not request.is_json:
+            logger.error(f"[{request_id}] ❌ Invalid content type - not JSON")
+            return jsonify({'error': 'Content-Type must be application/json'}), 400
+        
+        chat_request = request.json
+        if not chat_request:
+            logger.error(f"[{request_id}] ❌ No data received in request body")
+            return jsonify({'error': 'No data received'}), 400
+        
+        # Validate required fields
+        if 'model' not in chat_request:
+            logger.error(f"[{request_id}] ❌ Missing required field: model")
+            return jsonify({'error': 'Missing required field: model'}), 400
+        if 'messages' not in chat_request:
+            logger.error(f"[{request_id}] ❌ Missing required field: messages")
+            return jsonify({'error': 'Missing required field: messages'}), 400
+        
+        logger.info(f"[{request_id}] 📋 Streaming request payload: {json.dumps(chat_request, indent=2)}")
+
+        def generate_streaming_response():
+            """Generator function for Server-Sent Events"""
+            try:
+                # Call the LLM API first (we need complete text for ElevenLabs)
+                logger.info(f"[{request_id}] 🚀 Calling LLM API...")
+                response_text = call_llm_api(chat_request, request_id)
+                
+                # Validate response
+                if not response_text or not response_text.strip():
+                    logger.error(f"[{request_id}] ❌ Empty response from LLM")
+                    yield f"data: {json.dumps({'type': 'error', 'message': 'Empty response from LLM'})}\n\n"
+                    return
+                
+                logger.info(f"[{request_id}] ✅ Received LLM response: {response_text[:100]}...")
+                
+                # Split response into sentences for chunked audio generation
+                sentences = split_into_sentences(response_text)
+                total_chunks = len(sentences)
+                
+                logger.info(f"[{request_id}] 📊 Split response into {total_chunks} sentences")
+                
+                # Send metadata first
+                yield f"data: {json.dumps({'type': 'metadata', 'total_chunks': total_chunks, 'text': response_text})}\n\n"
+                
+                # Generate TTS for each sentence and stream
+                for chunk_id, sentence in enumerate(sentences, 1):
+                    try:
+                        logger.info(f"[{request_id}] 🎵 Generating TTS for chunk {chunk_id}/{total_chunks}: '{sentence[:30]}...'")
+                        audio_base64 = generate_sentence_audio(sentence, f"{request_id}-{chunk_id}")
+                        
+                        # Send audio chunk
+                        chunk_data = {
+                            'type': 'audio_chunk',
+                            'chunk_id': chunk_id,
+                            'text_chunk': sentence,
+                            'audio_base64': audio_base64
+                        }
+                        yield f"data: {json.dumps(chunk_data)}\n\n"
+                        logger.info(f"[{request_id}] ✅ Sent chunk {chunk_id}/{total_chunks}")
+                        
+                    except Exception as e:
+                        logger.error(f"[{request_id}] ❌ Failed to generate TTS for chunk {chunk_id}: {e}")
+                        # Send error for this chunk but continue with others
+                        error_data = {
+                            'type': 'chunk_error',
+                            'chunk_id': chunk_id,
+                            'text_chunk': sentence,
+                            'error': str(e)
+                        }
+                        yield f"data: {json.dumps(error_data)}\n\n"
+                
+                # Send completion signal
+                yield f"data: {json.dumps({'type': 'complete'})}\n\n"
+                logger.info(f"[{request_id}] ✅ Streaming response completed successfully")
+                
+            except Exception as e:
+                logger.error(f"[{request_id}] 💥 Error in streaming response generation: {e}")
+                yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+        
+        return Response(generate_streaming_response(), 
+                       content_type='text/plain; charset=utf-8',
+                       headers={'Cache-Control': 'no-cache'})
+                       
+    except Exception as e:
+        logger.error(f"[{request_id}] 💥 Unexpected error in chat_stream_api: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
 def call_llm_api(chat_request, request_id=None):
     """Calls the LLM API and returns the response"""
     if request_id is None:
@@ -273,6 +367,38 @@ def call_llm_api(chat_request, request_id=None):
     # Apply fast format post-processing for character consistency
     processed_content = apply_format_post_processing(content.strip(), request_id)
     return processed_content
+
+def split_into_sentences(text):
+    """Split text into sentences for streaming TTS generation"""
+    import re
+    
+    # Simple sentence splitting on common sentence endings
+    # This works well for pirate speech which tends to be short sentences
+    sentences = re.split(r'[.!?]+\s+', text)
+    
+    # Filter out empty sentences and add back punctuation
+    result = []
+    for i, sentence in enumerate(sentences):
+        sentence = sentence.strip()
+        if sentence:
+            # Add punctuation back if not at the end
+            if i < len(sentences) - 1:
+                # Try to preserve original punctuation
+                if text.find(sentence + '.') != -1:
+                    sentence += '.'
+                elif text.find(sentence + '!') != -1:
+                    sentence += '!'
+                elif text.find(sentence + '?') != -1:
+                    sentence += '?'
+                else:
+                    sentence += '.'
+            result.append(sentence)
+    
+    # If no sentences found, return the whole text as one sentence
+    if not result:
+        result = [text.strip()]
+    
+    return result
 
 def apply_format_post_processing(content, request_id=None):
     """Apply fast format post-processing for Mr. Bones character consistency"""
