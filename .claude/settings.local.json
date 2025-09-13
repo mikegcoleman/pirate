@@ -13,7 +13,11 @@
       "WebSearch",
       "Bash(git log:*)",
       "Bash(git pull:*)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(docker ps:*)",
+      "Bash(ss:*)",
+      "Bash(time:*)",
+      "WebFetch(domain:docs.docker.com)"
     ],
     "deny": [],
     "ask": []
