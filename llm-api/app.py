@@ -31,8 +31,6 @@ signal.signal(signal.SIGTERM, handle_shutdown)
 
 app = Flask(__name__)
 
-# GPU detection removed - no longer needed for ElevenLabs-only TTS
-
 # ElevenLabs TTS Provider
 class ElevenLabsTTSProvider:
     """ElevenLabs TTS Provider (cloud)"""
@@ -506,7 +504,6 @@ def validate_api_environment():
     # Check ElevenLabs TTS configuration
     print("✅ Using ElevenLabs TTS")
     
-# CUDA check removed - no longer needed for ElevenLabs-only TTS
     
     if errors:
         print("❌ API environment validation failed:")
