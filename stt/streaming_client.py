@@ -164,10 +164,11 @@ class StreamingAudioPlayer:
         print("🎵 All audio chunks completed")
 
 
-async def send_streaming_request(chat_request):
+async def send_streaming_request(chat_request, start_time=None):
     """Send a chat request to the streaming API and handle chunked audio response.
     Args:
         chat_request (dict): The request payload for the LLM API.
+        start_time (float): Time when the user asked the question.
     """
     # Handle both base URL and full endpoint URL formats
     if API_URL.endswith("/api/chat"):
@@ -226,7 +227,11 @@ async def send_streaming_request(chat_request):
                                 
                                 if first_chunk_time is None:
                                     first_chunk_time = time.time()
-                                    print(f"⚡ FIRST CHUNK RECEIVED - Ready to play!")
+                                    if start_time:
+                                        time_to_first_audio = first_chunk_time - start_time
+                                        print(f"⚡ FIRST AUDIO READY in {time_to_first_audio:.2f}s!")
+                                    else:
+                                        print(f"⚡ FIRST CHUNK RECEIVED - Ready to play!")
                                 
                                 print(f"📦 Received chunk {chunk_id}/{total_chunks}: '{text_chunk[:30]}...'")
                                 audio_player.add_audio_chunk(audio_base64, chunk_id)
@@ -248,9 +253,6 @@ async def send_streaming_request(chat_request):
                 print("⏳ Waiting for audio playback to complete...")
                 audio_player.wait_for_completion()
                 audio_player.stop_playback()
-                
-                if first_chunk_time:
-                    print(f"⚡ PERFORMANCE: First audio started in {first_chunk_time - time.time():.2f}s!")
                 
                 return {
                     'response': response_text,
@@ -317,6 +319,7 @@ def play_filler_phrase():
 
 async def main():
     """Main conversation loop with streaming audio."""
+    import time
     print("🏴‍☠️ Mr. Bones Streaming Voice Assistant Starting...")
     print("=" * 50)
     
@@ -333,7 +336,7 @@ async def main():
             # Get speech input
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 print("🎤 Listening for speech...")
-                result = await loop.run_in_executor(executor, stt.transcribe)
+                result = await asyncio.get_event_loop().run_in_executor(executor, stt.transcribe)
                 
             if result is None or result[0] is None:
                 print("❌ No speech detected, trying again...")
@@ -341,6 +344,9 @@ async def main():
             
             user_text, confidence = result
             print(f"🗣️ User said: '{user_text}' (confidence: {confidence})")
+            
+            # Record start time for performance measurement
+            start_time = time.time()
             
             # Add user message
             messages.append({"role": "user", "content": user_text})
@@ -353,14 +359,14 @@ async def main():
             
             # Start request and play filler
             print("🎭 Starting response generation...")
-            request_task = asyncio.create_task(send_streaming_request(chat_request))
+            request_task = asyncio.create_task(send_streaming_request(chat_request, start_time))
             
             # Small delay then play filler
-            await asyncio.sleep(0.3)  # 300ms natural response delay
+            await asyncio.sleep(0.15)  # 150ms natural response delay
             
-            # Play filler phrase while streaming starts
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                await loop.run_in_executor(executor, play_filler_phrase)
+            # Play filler phrase while streaming starts - COMMENTED OUT FOR FASTER RESPONSES
+            # with concurrent.futures.ThreadPoolExecutor() as executor:
+            #     await asyncio.get_event_loop().run_in_executor(executor, play_filler_phrase)
             
             # Wait for streaming response
             print("⏳ Waiting for streaming response...")
@@ -387,9 +393,6 @@ async def main():
 if __name__ == "__main__":
     # Required import for thread executor
     import concurrent.futures
-    
-    # Get the event loop
-    loop = asyncio.get_event_loop()
     
     # Run the main function
     asyncio.run(main())
