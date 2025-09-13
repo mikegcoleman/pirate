@@ -5,6 +5,3 @@ Flask==2.3.3
 requests==2.31.0
 python-dotenv==1.0.0
 elevenlabs
-
-# Note: Kokoro TTS excluded for Mac - use TTS_PROVIDER=elevenlabs
-# soundfile excluded as it's only needed for Kokoro TTS
