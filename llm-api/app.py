@@ -11,24 +11,10 @@ import uuid
 from dotenv import load_dotenv
 import logging
 from datetime import datetime
-from abc import ABC, abstractmethod
 import re
 
-# Load environment variables first to check TTS provider
+# Load environment variables first
 load_dotenv()
-
-# Conditional imports based on TTS provider
-tts_provider_name = os.getenv("TTS_PROVIDER", "kokoro").lower()
-if tts_provider_name == "kokoro":
-    try:
-        from kokoro import KPipeline
-        import torch
-        KOKORO_AVAILABLE = True
-    except ImportError:
-        KOKORO_AVAILABLE = False
-        print("⚠️  Kokoro TTS not available - install with: pip install kokoro")
-else:
-    KOKORO_AVAILABLE = False
 
 
 # Configure logging
@@ -45,96 +31,10 @@ signal.signal(signal.SIGTERM, handle_shutdown)
 
 app = Flask(__name__)
 
-# GPU detection (only if torch is available)
-try:
-    import torch
-    use_gpu = torch.cuda.is_available()
-except ImportError:
-    use_gpu = False
+# GPU detection removed - no longer needed for ElevenLabs-only TTS
 
-# TTS Provider Classes
-class TTSProvider(ABC):
-    """Abstract base class for TTS providers"""
-    
-    @abstractmethod
-    def generate_audio(self, text: str) -> str:
-        """Generate audio and return base64 encoded WAV data"""
-        pass
-
-class KokoroTTSProvider(TTSProvider):
-    """Kokoro TTS Provider (local)"""
-    
-    def __init__(self):
-        if not KOKORO_AVAILABLE:
-            raise ImportError("Kokoro TTS not available. Install with: pip install kokoro")
-        
-        model_path = os.getenv("KOKORO_MODEL_PATH", "./models/kokoro/model.onnx")
-        voices_path = os.getenv("KOKORO_VOICES_PATH", "./models/kokoro/voices-v1.0.bin")
-        
-        # Create models directory if it doesn't exist
-        os.makedirs(os.path.dirname(model_path), exist_ok=True)
-        
-        # Initialize Kokoro TTS with GPU support
-        device = 'cuda' if use_gpu else 'cpu'
-        self.tts_engine = KPipeline(lang_code='a', device=device, repo_id='hexgrad/Kokoro-82M')
-        
-        if use_gpu:
-            print("✅ Kokoro TTS: Using GPU acceleration")
-        else:
-            print("✅ Kokoro TTS: Using CPU")
-    
-    def generate_audio(self, text: str) -> str:
-        """Generate audio using Kokoro TTS"""
-        try:
-            import soundfile as sf
-            import numpy as np
-        except ImportError:
-            raise ImportError("soundfile required for Kokoro TTS. Install with: pip install soundfile")
-        
-        # Use Kokoro TTS with valid voice
-        # Using af_heart as shown in the error message example
-        generator = self.tts_engine(
-            text, 
-            voice="af_heart",
-            speed=0.95
-        )
-        audio_tensor = None
-        for i, (gs, ps, audio) in enumerate(generator):
-            audio_tensor = audio
-            break  # Take the first audio chunk
-        
-        if audio_tensor is None:
-            raise Exception("No audio generated")
-        
-        # Convert tensor to numpy if needed
-        if hasattr(audio_tensor, 'cpu'):
-            audio_np = audio_tensor.cpu().numpy()
-        else:
-            audio_np = np.array(audio_tensor)
-        
-        # Create temporary WAV file
-        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_audio:
-            temp_path = tmp_audio.name
-        
-        try:
-            # Write audio to temp file (file handle is now closed)
-            sf.write(temp_path, audio_np.squeeze(), 24000)
-            
-            # Read the WAV file and encode as base64
-            with open(temp_path, 'rb') as audio_file:
-                audio_data = audio_file.read()
-                audio_base64 = base64.b64encode(audio_data).decode('utf-8')
-        finally:
-            # Clean up temp file
-            try:
-                os.unlink(temp_path)
-            except (OSError, PermissionError):
-                # Ignore cleanup errors on Windows
-                pass
-        
-        return audio_base64
-
-class ElevenLabsTTSProvider(TTSProvider):
+# ElevenLabs TTS Provider
+class ElevenLabsTTSProvider:
     """ElevenLabs TTS Provider (cloud)"""
     
     def __init__(self):
@@ -170,67 +70,28 @@ class ElevenLabsTTSProvider(TTSProvider):
         
         # Save to temporary file
         with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_audio:
+            temp_path = tmp_audio.name
             tmp_audio.write(audio_data)
             tmp_audio.flush()
-            
-            # Read and encode as base64
-            with open(tmp_audio.name, 'rb') as audio_file:
+        
+        try:
+            # Read and encode as base64 (file handle is now closed)
+            with open(temp_path, 'rb') as audio_file:
                 audio_data = audio_file.read()
                 audio_base64 = base64.b64encode(audio_data).decode('utf-8')
-            
+        finally:
             # Clean up temp file
-            os.unlink(tmp_audio.name)
+            try:
+                os.unlink(temp_path)
+            except (OSError, PermissionError):
+                # Ignore cleanup errors on Windows
+                pass
         
         return audio_base64
 
-class FallbackTTSProvider(TTSProvider):
-    """Fallback TTS Provider (pre-recorded message)"""
-    
-    def __init__(self):
-        self.fallback_path = os.getenv("FALLBACK_MESSAGE_PATH", "./assets/fallback_message_b64.txt")
-        self.fallback_audio = self._load_fallback_audio()
-        print(f"✅ Fallback TTS: Loaded from {self.fallback_path}")
-    
-    def _load_fallback_audio(self) -> str:
-        """Load the pre-recorded fallback message"""
-        try:
-            with open(self.fallback_path, 'r') as f:
-                content = f.read().strip()
-                if content == "PLACEHOLDER_FALLBACK_AUDIO_BASE64_WILL_BE_GENERATED_LATER":
-                    # Return a simple placeholder for now
-                    return ""
-                return content
-        except FileNotFoundError:
-            logger.warning(f"Fallback audio file not found: {self.fallback_path}")
-            return ""
-    
-    def generate_audio(self, text: str) -> str:
-        """Return the pre-recorded fallback message"""
-        if not self.fallback_audio:
-            raise Exception("No fallback audio available - please generate fallback_message_b64.txt")
-        return self.fallback_audio
 
-# Initialize TTS Provider based on configuration
-def initialize_tts_provider():
-    """Initialize the appropriate TTS provider based on configuration"""
-    provider_name = os.getenv("TTS_PROVIDER", "kokoro").lower()
-    
-    try:
-        if provider_name == "elevenlabs":
-            return ElevenLabsTTSProvider()
-        elif provider_name == "kokoro":
-            return KokoroTTSProvider()
-        else:
-            logger.warning(f"Unknown TTS provider: {provider_name}, falling back to Kokoro")
-            return KokoroTTSProvider()
-    except Exception as e:
-        logger.error(f"Failed to initialize {provider_name} TTS provider: {e}")
-        logger.info("Falling back to Kokoro TTS")
-        return KokoroTTSProvider()
-
-# Initialize TTS
-tts_provider = initialize_tts_provider()
-fallback_provider = FallbackTTSProvider()
+# Initialize ElevenLabs TTS
+tts_provider = ElevenLabsTTSProvider()
 
 def get_llm_endpoint():
     """Returns the complete LLM API endpoint URL"""
@@ -494,7 +355,7 @@ def generate_sentence_audio(sentence, request_id=None):
     logger.info(f"[{request_id}] 🎵 Starting TTS for sentence: {sentence[:50]}...")
     
     try:
-        # Try the primary TTS provider
+        # Generate TTS audio using ElevenLabs
         audio_base64 = tts_provider.generate_audio(sentence)
         
         generation_time = time.time() - start_time
@@ -504,24 +365,8 @@ def generate_sentence_audio(sentence, request_id=None):
         
     except Exception as e:
         generation_time = time.time() - start_time
-        logger.error(f"[{request_id}] ❌ Primary TTS failed after {generation_time:.3f}s: {e}")
-        
-        # Try fallback provider
-        try:
-            logger.info(f"[{request_id}] 🔄 Attempting fallback TTS...")
-            fallback_audio = fallback_provider.generate_audio(sentence)
-            
-            fallback_time = time.time() - start_time
-            logger.info(f"[{request_id}] ✅ Fallback TTS completed in {fallback_time:.3f}s")
-            
-            return fallback_audio
-            
-        except Exception as fallback_error:
-            final_time = time.time() - start_time
-            logger.error(f"[{request_id}] 💥 Both primary and fallback TTS failed after {final_time:.3f}s")
-            logger.error(f"[{request_id}] Primary error: {e}")
-            logger.error(f"[{request_id}] Fallback error: {fallback_error}")
-            raise Exception(f"All TTS providers failed. Primary: {e}, Fallback: {fallback_error}")
+        logger.error(f"[{request_id}] ❌ TTS generation failed after {generation_time:.3f}s: {e}")
+        raise Exception(f"TTS generation failed: {e}")
 
 def validate_api_environment():
     """Validate API environment variables and dependencies"""
@@ -532,26 +377,10 @@ def validate_api_environment():
     if not llm_base_url:
         errors.append("LLM_BASE_URL environment variable is not set")
     
-    # Check TTS model
-    if KOKORO_AVAILABLE:
-        try:
-            # Test Kokoro TTS loading
-            test_tts = KPipeline(lang_code='a', device='cpu', repo_id='hexgrad/Kokoro-82M')
-            print("✅ Kokoro TTS loaded successfully")
-        except Exception as e:
-            errors.append(f"Kokoro TTS loading failed: {e}")
-    else:
-        print("⚠️ Kokoro TTS not available (using ElevenLabs)")
+    # Check ElevenLabs TTS configuration
+    print("✅ Using ElevenLabs TTS")
     
-    # Check CUDA availability
-    try:
-        import torch
-        if torch.cuda.is_available():
-            print("✅ CUDA available for GPU acceleration")
-        else:
-            print("⚠️ CUDA not available, using CPU")
-    except ImportError:
-        print("⚠️ PyTorch not available, using CPU")
+# CUDA check removed - no longer needed for ElevenLabs-only TTS
     
     if errors:
         print("❌ API environment validation failed:")

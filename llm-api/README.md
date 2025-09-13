@@ -4,17 +4,14 @@ The backend API server for Mr. Bones pirate voice assistant, providing LLM chat 
 
 ## 🎯 Overview
 
-This Flask-based API server handles chat requests, processes them through local or cloud LLM services, and generates character-appropriate audio responses using Kokoro TTS or ElevenLabs. It's designed to run on powerful hardware with GPU acceleration for optimal performance.
+This Flask-based API server handles chat requests, processes them through local or cloud LLM services, and generates character-appropriate audio responses using ElevenLabs TTS.
 
 ## 🚀 Features
 
 - **LLM Integration**: Support for local (Ollama) and cloud (OpenAI) LLM providers
-- **Kokoro TTS**: High-quality local text-to-speech with character voices
 - **ElevenLabs TTS**: Cloud-based TTS with custom voice cloning
 - **Streaming Support**: Real-time response streaming with sentence-level audio
-- **GPU Acceleration**: CUDA support for faster TTS generation
 - **Health Monitoring**: Built-in health checks and comprehensive logging
-- **Error Handling**: Graceful degradation and fallback mechanisms
 
 ## 📋 Quick Start
 
@@ -23,10 +20,7 @@ This Flask-based API server handles chat requests, processes them through local 
 ```bash
 pip install -r requirements.txt
 
-# For Kokoro TTS (recommended)
-pip install kokoro soundfile
-
-# For ElevenLabs TTS (optional)
+# For ElevenLabs TTS
 pip install elevenlabs
 ```
 
@@ -88,56 +82,26 @@ LLM_MODEL=gpt-4o
 OPENAI_API_KEY=sk-your-key-here
 ```
 
-#### TTS Configuration
+#### ElevenLabs TTS Configuration
 ```bash
-# TTS Provider Selection
-TTS_PROVIDER=kokoro          # 'kokoro' or 'elevenlabs'
-
-# Kokoro TTS (local)
-KOKORO_MODEL_PATH=./models/kokoro/model.onnx
-KOKORO_VOICES_PATH=./models/kokoro/voices-v1.0.bin
-USE_GPU=true                 # Enable CUDA acceleration
-
-# ElevenLabs TTS (cloud)
+# ElevenLabs TTS Configuration
 ELEVENLABS_API_KEY=your_api_key
 ELEVENLABS_VOICE_ID=your_voice_id
-
-# Fallback Audio
-FALLBACK_MESSAGE_PATH=./assets/fallback_message_b64.txt
 ```
 
-## 🎤 TTS Providers
-
-### Kokoro TTS (Recommended)
-
-**Advantages:**
-- High-quality character voices
-- Local processing (no API costs)
-- GPU acceleration support
-- Automatic model downloading
-
-**Setup:**
-```bash
-pip install kokoro soundfile
-# Models download automatically on first use
-```
-
-### ElevenLabs TTS
+## 🎤 ElevenLabs TTS
 
 **Advantages:**
 - Professional voice cloning
 - Cloud processing (no local GPU needed)
 - Wide voice selection
+- High-quality character voices
 
 **Setup:**
 ```bash
 pip install elevenlabs
 # Set API key and voice ID in .env
 ```
-
-### Fallback Provider
-
-Pre-recorded audio message for when both TTS providers fail. Currently configured but requires audio file generation.
 
 ## 🌐 API Endpoints
 
@@ -308,10 +272,7 @@ llm-api/
 ├── Dockerfile             # Container configuration
 ├── compose.yaml           # Docker Compose setup
 ├── env.example            # Environment template
-├── assets/               # Static assets
-│   └── fallback_message_b64.txt
-└── models/               # TTS models (auto-downloaded)
-    └── kokoro/
+└── assets/               # Static assets
 ```
 
 ## 🔍 Dependencies
@@ -320,11 +281,6 @@ llm-api/
 - **Flask**: Web framework
 - **requests**: HTTP client for LLM APIs
 - **python-dotenv**: Environment management
-
-### TTS (Kokoro)
-- **kokoro**: Local TTS engine
-- **torch**: PyTorch for neural networks
-- **soundfile**: Audio file I/O
 
 ### TTS (ElevenLabs)
 - **elevenlabs**: Cloud TTS client
@@ -338,13 +294,11 @@ llm-api/
 
 ### Common Issues
 
-#### TTS Model Loading Fails
+#### ElevenLabs API Issues
 ```bash
-# Check GPU availability
-python -c "import torch; print(torch.cuda.is_available())"
-
-# Reinstall with CUDA support
-pip install torch --index-url https://download.pytorch.org/whl/cu118
+# Test ElevenLabs API connection
+curl -X GET https://api.elevenlabs.io/v1/voices \
+  -H "xi-api-key: your_api_key_here"
 ```
 
 #### LLM Connection Errors
@@ -357,21 +311,20 @@ ollama list
 ```
 
 #### Audio Generation Fails
-- Check TTS provider configuration
-- Verify model paths exist
-- Test with fallback provider
+- Check ElevenLabs API key and voice ID
+- Verify ElevenLabs account has sufficient credits
+- Check network connectivity to ElevenLabs API
 
 ### Performance Issues
 
 #### Slow Response Times
-- Enable GPU acceleration
-- Use smaller models (Phi-3.5 3.8B)
+- Use smaller LLM models (Phi-3.5 3.8B)
 - Increase timeout values
+- Check ElevenLabs API response times
 
 #### High Memory Usage
-- Use quantized models (q4_K_M)
+- Use quantized LLM models (q4_K_M)
 - Reduce context window size
-- Monitor VRAM usage
 
 ## 📈 Monitoring
 

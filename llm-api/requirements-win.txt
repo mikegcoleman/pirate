@@ -1,10 +1,4 @@
 Flask==2.3.3
 requests==2.31.0
 python-dotenv==1.0.0
-kokoro
-soundfile
 elevenlabs
-torch==2.7.0+cu128
-torchvision==0.22.0+cu128
-torchaudio==2.7.0+cu128
---extra-index-url https://download.pytorch.org/whl/cu128
