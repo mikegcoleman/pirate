@@ -1,29 +1,47 @@
-# Byte-compiled / optimized / DLL files
+# Python files (for stt/ client)
 __pycache__/
 *.py[cod]
 *$py.class
-
-# Virtual environment
 **/venv*/
+pip-log.txt
+pytest_cache/
+*.cover
+coverage.xml
+htmlcov/
 
+# Node.js files (for llm-api/)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+.npm
 
 # Environment variables
 *.env
 **/.env
 .env.test
 **/.env.test
+.env.local
+.env.production
+
+# Build outputs
+dist/
+build/
+*.tgz
+*.tar.gz
 
 # Docker files
 *.log
 *.pid
 *.tar
 *.bak
-
-# Local Docker volumes, images, and containers
 docker-compose.override.yml
 
-# VS Code settings
+# Development tools
 .vscode/
+.idea/
+*.iml
 
 # OS-generated files
 .DS_Store
@@ -31,24 +49,24 @@ Thumbs.db
 
 # Test output
 output.txt
+coverage/
+.nyc_output/
 
-# Python and dependency files
-pip-log.txt
-pytest_cache/
-*.cover
-coverage.xml
-htmlcov/
-
-# Others
-.idea/
-*.iml
+# Audio files
 models
 **/*.wav
+**/*.mp3
+**/*.mp4
 
 # TTS Models - exclude model files but keep directory structure
 llm-api/tts_models/*
 !llm-api/tts_models/.gitkeep
 
-# Kokoro Models - exclude model files but keep directory structure
+# Legacy model directories (cleanup)
 llm-api/models/*
 !llm-api/models/.gitkeep
+
+# Runtime files
+*.swp
+*.swo
+*~

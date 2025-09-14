@@ -3,7 +3,7 @@ const axios = require('axios');
 const fs = require('fs').promises;
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
-const { ElevenLabsAPI } = require('elevenlabs');
+const { ElevenLabsClient } = require('elevenlabs');
 require('dotenv').config();
 
 const app = express();
@@ -40,7 +40,7 @@ class ElevenLabsTTSProvider {
             throw new Error('ElevenLabs API key and voice ID must be set in environment variables');
         }
         
-        this.client = new ElevenLabsAPI({
+        this.client = new ElevenLabsClient({
             apiKey: this.apiKey
         });
         
@@ -49,13 +49,14 @@ class ElevenLabsTTSProvider {
     
     async generateAudio(text) {
         try {
-            const audio = await this.client.textToSpeech.convert(
-                this.voiceId,
-                {
-                    text: text,
-                    model_id: "eleven_monolingual_v1"
+            const audio = await this.client.textToSpeech.convert(this.voiceId, {
+                text: text,
+                model_id: process.env.TTS_MODEL || "eleven_flash_v2_5",
+                voice_settings: {
+                    stability: 0.75,
+                    similarity_boost: 0.8
                 }
-            );
+            });
             
             // Convert audio stream to base64
             const chunks = [];
@@ -157,18 +158,7 @@ async function callLlmApi(chatRequest, requestId) {
     log(requestId, 'info', `🌐 Calling LLM endpoint: ${llmEndpoint}`);
     log(requestId, 'info', `🤖 Using model: ${model}`);
     
-    // Add optimal decode parameters for Mistral models
     const optimizedRequest = { ...chatRequest };
-    if (model && model.toLowerCase().includes('mistral')) {
-        Object.assign(optimizedRequest, {
-            temperature: 0.6,
-            top_p: 0.9,
-            max_tokens: 120,
-            presence_penalty: 0.3,
-            frequency_penalty: 0.2
-        });
-        log(requestId, 'info', '🎯 Applied Mistral optimization parameters');
-    }
     
     // Send request to LLM API
     log(requestId, 'info', '📡 Sending request to LLM...');
@@ -223,6 +213,7 @@ async function callLlmApi(chatRequest, requestId) {
 async function generateSentenceAudio(sentence, requestId) {
     const startTime = Date.now();
     log(requestId, 'info', `🎵 Starting TTS for sentence: ${sentence.substring(0, 50)}...`);
+    log(requestId, 'info', `🎵 Speech rate: ${process.env.SPEECH_RATE}`);
     
     try {
         const audioBase64 = await ttsProvider.generateAudio(sentence);
@@ -388,20 +379,48 @@ async function validateApiEnvironment() {
     console.log('✅ API environment validation passed');
 }
 
+// Warmup LLM API - ensures model is loaded and responding
+async function warmupLlmApi() {
+    console.log('🔥 Warming up LLM API...');
+    const startTime = Date.now();
+    
+    try {
+        const warmupRequest = {
+            model: process.env.LLM_MODEL || 'ai/llama3.2:latest',
+            messages: [
+                { role: 'user', content: 'Hi' }
+            ],
+            max_tokens: 10,
+            temperature: 0.1
+        };
+        
+        const response = await callLlmApi(warmupRequest, 'warmup');
+        const warmupTime = (Date.now() - startTime) / 1000;
+        
+        console.log(`✅ LLM API warmed up successfully in ${warmupTime.toFixed(2)}s`);
+        console.log(`✅ Model loaded and responding: ${warmupRequest.model}`);
+        return true;
+        
+    } catch (error) {
+        console.error('❌ LLM API warmup failed:', error.message);
+        console.error('❌ This may indicate Docker Model Runner is not running or model not loaded');
+        throw new Error(`LLM API warmup failed: ${error.message}`);
+    }
+}
+
 // Load configuration files
 async function loadConfiguration() {
     try {
         const contractionsPath = path.join(__dirname, 'config', 'contractions.json');
-        const utf8FixesPath = path.join(__dirname, 'config', 'utf8-fixes.json');
         
         const contractionsData = await fs.readFile(contractionsPath, 'utf8');
-        const utf8FixesData = await fs.readFile(utf8FixesPath, 'utf8');
-        
         contractionsMap = JSON.parse(contractionsData);
-        utf8FixesMap = JSON.parse(utf8FixesData);
+        
+        // Initialize empty UTF-8 fixes map (can be added later if needed)
+        utf8FixesMap = {};
         
         console.log(`✅ Loaded ${Object.keys(contractionsMap).length} contractions`);
-        console.log(`✅ Loaded ${Object.keys(utf8FixesMap).length} UTF-8 fixes`);
+        console.log(`✅ UTF-8 fixes disabled (can be re-enabled later)`);
     } catch (error) {
         console.error('❌ Failed to load configuration files:', error.message);
         process.exit(1);
@@ -428,6 +447,9 @@ async function startServer() {
         // Validate environment
         await validateApiEnvironment();
         
+        // Warmup LLM API (loads model into memory)
+        await warmupLlmApi();
+        
         // Initialize TTS provider
         ttsProvider = new ElevenLabsTTSProvider();
         
@@ -436,6 +458,7 @@ async function startServer() {
             console.log(`✅ Server starting on http://localhost:${port}`);
             console.log(`✅ Using LLM endpoint: ${getLlmEndpoint()}`);
             console.log('✅ Using ElevenLabs TTS');
+            console.log('🚀 API is online and ready to accept requests!');
         });
         
     } catch (error) {
