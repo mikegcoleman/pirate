@@ -1,4 +1,25 @@
-# Todo: Use wait time env variable to control how long to wait for speech input
+#!/usr/bin/env python3
+"""
+Main Client for Raspberry Pi Pirate Project
+Handles the full conversation loop: speech input → STT → LLM API → audio playback
+
+Architecture:
+1. Capture audio via USB microphone (using stt.py)
+2. Convert speech to text via Vosk STT
+3. Send text to LLM API for pirate response
+4. Receive audio response from API
+5. Play audio through Bluetooth speaker
+
+Environment Variables:
+- API_URL: LLM API endpoint
+- LLM_MODEL: Model to use
+- AUDIO_PLAYER: Audio player command (default: paplay)
+- BLUETOOTH_SPEAKER: Optional Bluetooth speaker MAC address
+
+Audio Routing Notes:
+- Use `pactl set-default-sink "bluez_output.24_F4_95_F4_CA_45.1"` to force Bluetooth speaker
+- Use `pactl set-default-source "alsa_input.usb-Antlion_Audio_Antlion_USB_Microphone-00.mono-fallback"` to force USB mic
+"""
 
 import stt
 import subprocess
@@ -7,35 +28,33 @@ import asyncio
 import httpx
 import sys
 import json
-import dotenv
 import re
-import random
 import base64
 import tempfile
-import platform
 import queue
 import threading
 import time
+from typing import Optional
 
-"""Streaming client for Mr. Bones, the pirate voice assistant.
-Handles speech-to-text, streaming HTTP audio requests, and real-time chunked audio playback.
-"""
+# Load environment
+import dotenv
 dotenv.load_dotenv()
 
 # Audio Configuration
 SPEECH_RATE = os.getenv("SPEECH_RATE", "200")
-AUDIO_PLAYER = os.getenv("AUDIO_PLAYER", "afplay")
+AUDIO_PLAYER = os.getenv("AUDIO_PLAYER", "paplay")
+BLUETOOTH_SPEAKER = os.getenv("BLUETOOTH_SPEAKER")  # Optional Bluetooth speaker address
+BLUETOOTH_PIN = os.getenv("BLUETOOTH_PIN", "1234")  # Bluetooth pairing PIN
 
 # Performance Settings
 TIMEOUT = int(os.getenv("TIMEOUT", "90"))
 WAIT_INTERVAL = int(os.getenv("WAIT_INTERVAL", "3"))
 
 def validate_environment():
-    """Validate all required environment variables and configuration.
-    Exits with error message if validation fails.
-    """
+    """Validate all required environment variables and configuration."""
     errors = []
     print("⬜ Environment validation starting")
+    
     # Required variables
     required_vars = {
         "API_URL": "URL of your LLM API backend",
@@ -64,7 +83,7 @@ def validate_environment():
         errors.append("WAIT_INTERVAL must be a valid integer (seconds)")
     
     # Validate audio player
-    audio_player = os.getenv("AUDIO_PLAYER", "afplay")
+    audio_player = os.getenv("AUDIO_PLAYER", "paplay")
     try:
         subprocess.run([audio_player, "--help"], capture_output=True, check=False)
     except FileNotFoundError:
@@ -86,18 +105,149 @@ validate_environment()
 API_URL = os.getenv("API_URL")
 LLM_MODEL = os.getenv("LLM_MODEL")
 
-# Filler phrase counter for cycling through ElevenLabs audio files
-filler_counter = 1
+def play_wav_bytes(wav_bytes: bytes, sink_name: Optional[str] = None):
+    """
+    Play WAV audio bytes directly through PulseAudio.
+    
+    Args:
+        wav_bytes: Raw WAV file bytes
+        sink_name: Optional PulseAudio sink name (e.g., "bluez_output.24_F4_95_F4_CA_45.1")
+                  If None, uses default sink.
+    
+    Returns:
+        bool: True if playback succeeded, False otherwise
+    """
+    try:
+        # Create temporary WAV file
+        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_file:
+            tmp_file.write(wav_bytes)
+            tmp_file.flush()
+            os.fsync(tmp_file.fileno())
+            
+            try:
+                # Build paplay command with volume boost
+                cmd = [AUDIO_PLAYER]
+                if sink_name:
+                    cmd.extend(["--device", sink_name])
+                # Add volume boost for better audibility
+                cmd.extend(["--volume", "65536"])  # Max volume
+                cmd.append(tmp_file.name)
+                
+                # Play audio (blocking)
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                
+                if result.returncode == 0:
+                    return True
+                else:
+                    print(f"❌ Audio playback failed (exit code {result.returncode})")
+                    if result.stderr:
+                        print(f"   Error: {result.stderr.strip()}")
+                    return False
+                    
+            finally:
+                # Clean up temporary file
+                try:
+                    os.unlink(tmp_file.name)
+                except OSError:
+                    pass
+                    
+    except Exception as e:
+        print(f"❌ Error playing WAV bytes: {e}")
+        return False
 
+def play_any_bytes(audio_bytes: bytes, sink_name: Optional[str] = None):
+    """
+    Play audio bytes of unknown format (MP3, OGG, Opus, etc.) by piping through FFmpeg to PulseAudio.
+    
+    Args:
+        audio_bytes: Raw audio file bytes (any format supported by FFmpeg)
+        sink_name: Optional PulseAudio sink name (e.g., "bluez_output.24_F4_95_F4_CA_45.1")
+                  If None, uses default sink.
+    
+    Returns:
+        bool: True if playback succeeded, False otherwise
+    """
+    try:
+        # Build paplay command with volume boost
+        paplay_cmd = [AUDIO_PLAYER]
+        if sink_name:
+            paplay_cmd.extend(["--device", sink_name])
+        # Add volume boost for better audibility  
+        paplay_cmd.extend(["--volume", "65536"])  # Max volume
+        
+        # Create pipeline: ffmpeg stdin → wav stdout → paplay stdin
+        pipeline_cmd = [
+            "bash", "-c",
+            f"ffmpeg -hide_banner -loglevel error -i pipe:0 -f wav - | {' '.join(paplay_cmd)}"
+        ]
+        
+        # Execute pipeline
+        process = subprocess.Popen(
+            pipeline_cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=False  # Binary data
+        )
+        
+        # Feed audio bytes to FFmpeg and get result
+        stdout, stderr = process.communicate(input=audio_bytes)
+        
+        if process.returncode == 0:
+            return True
+        else:
+            print(f"❌ Audio pipeline failed (exit code {process.returncode})")
+            if stderr:
+                print(f"   Error: {stderr.decode().strip()}")
+            return False
+            
+    except Exception as e:
+        print(f"❌ Error playing audio bytes: {e}")
+        return False
+
+def connect_bluetooth_speaker():
+    """Connect to Bluetooth speaker if configured."""
+    if not BLUETOOTH_SPEAKER:
+        print("🔊 No Bluetooth speaker configured")
+        return True
+    
+    print(f"🔵 Connecting to Bluetooth speaker: {BLUETOOTH_SPEAKER}")
+    
+    try:
+        # Check if bluetoothctl is available
+        result = subprocess.run(["which", "bluetoothctl"], capture_output=True)
+        if result.returncode != 0:
+            print("❌ bluetoothctl not found - install bluez-utils")
+            return False
+        
+        # First, try to connect (in case already paired)
+        connect_cmd = f"echo 'connect {BLUETOOTH_SPEAKER}' | bluetoothctl"
+        result = subprocess.run(connect_cmd, shell=True, capture_output=True, text=True, timeout=10)
+        
+        if "Connection successful" in result.stdout or "Already connected" in result.stdout:
+            print("✅ Bluetooth speaker connected successfully")
+            return True
+        
+        print(f"⚠️ Bluetooth connection may have failed")
+        print(f"💡 Try pairing manually: bluetoothctl -> pair {BLUETOOTH_SPEAKER} -> PIN: {BLUETOOTH_PIN}")
+        return False
+            
+    except subprocess.TimeoutExpired:
+        print("⏱️ Bluetooth connection timed out")
+        return False
+    except Exception as e:
+        print(f"❌ Bluetooth connection error: {e}")
+        return False
 
 class StreamingAudioPlayer:
-    """Manages streaming audio playback with queued chunks."""
+    """Manages streaming audio playback with queued chunks using the new audio helpers."""
     
-    def __init__(self):
+    def __init__(self, sink_name: Optional[str] = None):
         self.audio_queue = queue.Queue()
         self.is_playing = False
         self.play_thread = None
         self.stop_event = threading.Event()
+        self.sink_name = sink_name
     
     def start_playback(self):
         """Start the playback thread."""
@@ -124,7 +274,7 @@ class StreamingAudioPlayer:
             print(f"❌ Failed to decode audio chunk {chunk_id}: {e}")
     
     def _playback_worker(self):
-        """Worker thread that plays audio chunks in sequence."""
+        """Worker thread that plays audio chunks in sequence using the new audio helpers."""
         print("🔊 Audio playback worker started")
         
         while not self.stop_event.is_set():
@@ -134,22 +284,19 @@ class StreamingAudioPlayer:
                 
                 print(f"🔊 Playing audio chunk {chunk_id} ({len(audio_bytes)} bytes)")
                 
-                # Create temporary file and play
-                with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as tmp_file:
-                    tmp_file.write(audio_bytes)
-                    tmp_file.flush()
-                    os.fsync(tmp_file.fileno())
-                    
-                    try:
-                        # Play audio (blocking)
-                        result = subprocess.run([AUDIO_PLAYER, tmp_file.name], 
-                                                capture_output=True)
-                        if result.returncode != 0:
-                            print(f"⚠️ Audio player returned {result.returncode}")
-                        else:
-                            print(f"✅ Completed chunk {chunk_id}")
-                    finally:
-                        os.unlink(tmp_file.name)
+                # Try to determine if it's WAV or other format
+                # WAV files start with "RIFF" magic bytes
+                if audio_bytes.startswith(b'RIFF') and b'WAVE' in audio_bytes[:12]:
+                    # It's a WAV file - use direct playback
+                    success = play_wav_bytes(audio_bytes, self.sink_name)
+                else:
+                    # Unknown format - use FFmpeg pipeline
+                    success = play_any_bytes(audio_bytes, self.sink_name)
+                
+                if success:
+                    print(f"✅ Completed chunk {chunk_id}")
+                else:
+                    print(f"⚠️ Failed to play chunk {chunk_id}")
                 
                 self.audio_queue.task_done()
                 
@@ -163,13 +310,8 @@ class StreamingAudioPlayer:
         self.audio_queue.join()
         print("🎵 All audio chunks completed")
 
-
 async def send_streaming_request(chat_request, start_time=None):
-    """Send a chat request to the streaming API and handle chunked audio response.
-    Args:
-        chat_request (dict): The request payload for the LLM API.
-        start_time (float): Time when the user asked the question.
-    """
+    """Send a chat request to the streaming API and handle chunked audio response."""
     # Handle both base URL and full endpoint URL formats
     if API_URL.endswith("/api/chat"):
         streaming_url = API_URL.replace("/api/chat", "/api/chat/stream")
@@ -177,13 +319,20 @@ async def send_streaming_request(chat_request, start_time=None):
         streaming_url = API_URL + "api/chat/stream"
     else:
         streaming_url = API_URL + "/api/chat/stream"
+    
     print(f"\n🌐 === STREAMING API REQUEST ===")
     print(f"📡 Endpoint: {streaming_url}")
     print(f"🤖 Model: {chat_request.get('model', 'unknown')}")
     print(f"💬 Messages: {len(chat_request.get('messages', []))}")
     print(f"⏱️  Timeout: {TIMEOUT}s")
     
-    audio_player = StreamingAudioPlayer()
+    # Determine sink name for Bluetooth audio routing
+    sink_name = None
+    if BLUETOOTH_SPEAKER:
+        # Convert MAC address to PulseAudio sink name format
+        sink_name = f"bluez_output.{BLUETOOTH_SPEAKER.replace(':', '_')}.1"
+    
+    audio_player = StreamingAudioPlayer(sink_name=sink_name)
     total_chunks = 0
     received_chunks = 0
     response_text = ""
@@ -207,6 +356,9 @@ async def send_streaming_request(chat_request, start_time=None):
                     return None
                 
                 print("🚀 Starting streaming audio playback...")
+                if sink_name:
+                    print(f"🔊 Audio routing to: {sink_name}")
+                
                 audio_player.start_playback()
                 
                 # Process streaming response
@@ -273,12 +425,9 @@ async def send_streaming_request(chat_request, start_time=None):
         audio_player.stop_playback()
         return None
 
-
 def remove_nonstandard(text):
     """Remove non-standard characters to prevent TTS issues."""
-    # Remove emojis and other non-standard characters
     return re.sub(r'[^\x00-\x7F]+', '', text)
-
 
 def load_character_prompt():
     """Load the character prompt from prompt.txt file."""
@@ -295,33 +444,13 @@ def load_character_prompt():
         print(f"❌ Error loading prompt: {e}")
         sys.exit(1)
 
-
-def play_filler_phrase():
-    """Play a random filler phrase from the ElevenLabs generated audio files.
-    These are pre-generated phrases like 'Ahoy!', 'Arrr!', 'Thinking...' that
-    play while waiting for the LLM response to make the character feel more alive.
-    """
-    global filler_counter
-    
-    # Use ElevenLabs generated filler audio files
-    filler_file = f"audio/fillers/filler_{filler_counter:02d}.mp3"
-    
-    if os.path.exists(filler_file):
-        print(f"🏴‍☠️ Playing filler phrase: {filler_file}")
-        subprocess.run([AUDIO_PLAYER, filler_file], capture_output=True)
-        
-        # Cycle through available filler files (01-10)
-        filler_counter = (filler_counter % 10) + 1
-    else:
-        print(f"⚠️ Filler file not found: {filler_file}")
-        print("💡 Consider generating filler phrases with generate_filler_audio.py")
-
-
 async def main():
     """Main conversation loop with streaming audio."""
-    import time
     print("🏴‍☠️ Mr. Bones Streaming Voice Assistant Starting...")
     print("=" * 50)
+    
+    # Connect to Bluetooth speaker if configured
+    connect_bluetooth_speaker()
     
     # Load character prompt
     system_prompt = load_character_prompt()
@@ -333,7 +462,8 @@ async def main():
         while True:
             print(f"\n{'='*20} NEW INTERACTION {'='*20}")
             
-            # Get speech input
+            # Get speech input using stt module
+            import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 print("🎤 Listening for speech...")
                 result = await asyncio.get_event_loop().run_in_executor(executor, stt.transcribe)
@@ -343,7 +473,9 @@ async def main():
                 continue
             
             user_text, confidence = result
-            print(f"🗣️ User said: '{user_text}' (confidence: {confidence})")
+            print(f"🗣️ User said: '{user_text}'")
+            if confidence is not None:
+                print(f"   Confidence: {confidence:.2f}")
             
             # Record start time for performance measurement
             start_time = time.time()
@@ -357,20 +489,9 @@ async def main():
                 "messages": messages
             }
             
-            # Start request and play filler
+            # Start request
             print("🎭 Starting response generation...")
-            request_task = asyncio.create_task(send_streaming_request(chat_request, start_time))
-            
-            # Small delay then play filler
-            await asyncio.sleep(0.15)  # 150ms natural response delay
-            
-            # Play filler phrase while streaming starts - COMMENTED OUT FOR FASTER RESPONSES
-            # with concurrent.futures.ThreadPoolExecutor() as executor:
-            #     await asyncio.get_event_loop().run_in_executor(executor, play_filler_phrase)
-            
-            # Wait for streaming response
-            print("⏳ Waiting for streaming response...")
-            response_data = await request_task
+            response_data = await send_streaming_request(chat_request, start_time)
             
             if response_data:
                 clean_response = remove_nonstandard(response_data["response"])
@@ -389,10 +510,5 @@ async def main():
     except Exception as e:
         print(f"💥 Unexpected error: {e}")
 
-
 if __name__ == "__main__":
-    # Required import for thread executor
-    import concurrent.futures
-    
-    # Run the main function
     asyncio.run(main())
