@@ -40,6 +40,15 @@ from typing import Optional
 import dotenv
 dotenv.load_dotenv()
 
+# Import skeleton controllers
+try:
+    from skeleton_movement import get_skeleton_controller, disconnect_skeleton
+    from skeleton_setup import setup_skeleton_for_client
+    SKELETON_AVAILABLE = True
+except ImportError as e:
+    print(f"⚠️ Skeleton integration disabled: {e}")
+    SKELETON_AVAILABLE = False
+
 # Audio Configuration
 SPEECH_RATE = os.getenv("SPEECH_RATE", "200")
 AUDIO_PLAYER = os.getenv("AUDIO_PLAYER", "paplay")
@@ -49,6 +58,10 @@ BLUETOOTH_PIN = os.getenv("BLUETOOTH_PIN", "1234")  # Bluetooth pairing PIN
 # Performance Settings
 TIMEOUT = int(os.getenv("TIMEOUT", "90"))
 WAIT_INTERVAL = int(os.getenv("WAIT_INTERVAL", "3"))
+
+# Skeleton Configuration
+SKELETON_MOVEMENT_ENABLED = os.getenv("SKELETON_MOVEMENT_ENABLED", "true").lower() == "true"
+SKELETON_MOVEMENT_COOLDOWN = int(os.getenv("SKELETON_MOVEMENT_COOLDOWN", "10"))
 
 def validate_environment():
     """Validate all required environment variables and configuration."""
@@ -326,11 +339,14 @@ async def send_streaming_request(chat_request, start_time=None):
     print(f"💬 Messages: {len(chat_request.get('messages', []))}")
     print(f"⏱️  Timeout: {TIMEOUT}s")
     
-    # Determine sink name for Bluetooth audio routing
+    # Determine sink name for audio routing
+    # If skeleton setup ran, it should have set the default sink correctly
+    # Otherwise fall back to BLUETOOTH_SPEAKER env variable
     sink_name = None
     if BLUETOOTH_SPEAKER:
         # Convert MAC address to PulseAudio sink name format
         sink_name = f"bluez_output.{BLUETOOTH_SPEAKER.replace(':', '_')}.1"
+        print(f"🔊 Audio routing to: {sink_name}")
     
     audio_player = StreamingAudioPlayer(sink_name=sink_name)
     total_chunks = 0
@@ -449,8 +465,32 @@ async def main():
     print("🏴‍☠️ Mr. Bones Streaming Voice Assistant Starting...")
     print("=" * 50)
     
-    # Connect to Bluetooth speaker if configured
-    connect_bluetooth_speaker()
+    # Set up skeleton connections (BLE + BT Classic audio)
+    skeleton_controller = None
+    if SKELETON_AVAILABLE and SKELETON_MOVEMENT_ENABLED:
+        print("🤖 Setting up Mr. Bones skeleton connections...")
+        try:
+            # Run skeleton setup (BLE + BT Classic pairing)
+            skeleton_ready = await setup_skeleton_for_client()
+            
+            if skeleton_ready:
+                print("✅ Skeleton BLE and BT Classic audio setup complete!")
+                
+                # Initialize movement controller
+                skeleton_controller = await get_skeleton_controller()
+                if skeleton_controller.connected:
+                    print("🎭 Mr. Bones skeleton movement enabled!")
+                else:
+                    print("⚠️ Skeleton setup complete but movement controller failed")
+            else:
+                print("❌ Skeleton setup failed - movement disabled")
+                
+        except Exception as e:
+            print(f"⚠️ Skeleton setup error: {e}")
+    elif not SKELETON_MOVEMENT_ENABLED:
+        print("🤖 Skeleton movement disabled via configuration")
+    
+    # Note: Bluetooth speaker connection no longer needed - skeleton handles audio
     
     # Load character prompt
     system_prompt = load_character_prompt()
@@ -489,6 +529,16 @@ async def main():
                 "messages": messages
             }
             
+            # Trigger skeleton movement when starting to speak
+            if (SKELETON_MOVEMENT_ENABLED and 
+                skeleton_controller and skeleton_controller.connected):
+                try:
+                    movement_triggered = await skeleton_controller.trigger_speech_movement()
+                    if movement_triggered:
+                        print("🎭 Mr. Bones movement triggered!")
+                except Exception as e:
+                    print(f"⚠️ Skeleton movement error: {e}")
+            
             # Start request
             print("🎭 Starting response generation...")
             response_data = await send_streaming_request(chat_request, start_time)
@@ -509,6 +559,13 @@ async def main():
         print("\n👋 Goodbye! Mr. Bones is going back to sleep...")
     except Exception as e:
         print(f"💥 Unexpected error: {e}")
+    finally:
+        # Cleanup skeleton connection
+        if SKELETON_AVAILABLE:
+            try:
+                await disconnect_skeleton()
+            except Exception as e:
+                print(f"⚠️ Error disconnecting skeleton: {e}")
 
 if __name__ == "__main__":
     asyncio.run(main())
