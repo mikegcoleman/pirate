@@ -230,8 +230,18 @@ async def get_skeleton_controller() -> SkeletonController:
     
     if _skeleton_controller is None:
         _skeleton_controller = SkeletonController()
-        # Try to connect
-        await _skeleton_controller.connect()
+        # Use existing BLE connection from service instead of creating new one
+        try:
+            from skeleton_ble_service import service
+            if service.client and service.client.is_connected:
+                _skeleton_controller.client = service.client
+                _skeleton_controller.connected = True
+                print("🔗 Using existing skeleton BLE connection for movement control")
+            else:
+                print("⚠️ No existing skeleton BLE connection - movement disabled")
+        except ImportError:
+            # Fallback to original connection method if service not available
+            await _skeleton_controller.connect()
     
     return _skeleton_controller
 

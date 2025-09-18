@@ -43,7 +43,7 @@ dotenv.load_dotenv()
 # Import skeleton controllers
 try:
     from skeleton_movement import get_skeleton_controller, disconnect_skeleton
-    from skeleton_setup import setup_skeleton_for_client
+    from skeleton_setup import setup_skeleton_for_client, disconnect_skeleton_connections
     SKELETON_AVAILABLE = True
 except ImportError as e:
     print(f"⚠️ Skeleton integration disabled: {e}")
@@ -465,28 +465,52 @@ async def main():
     print("🏴‍☠️ Mr. Bones Streaming Voice Assistant Starting...")
     print("=" * 50)
     
-    # Set up skeleton connections (BLE + BT Classic audio)
+    # Set up skeleton connections (assume services are already running)
     skeleton_controller = None
     if SKELETON_AVAILABLE and SKELETON_MOVEMENT_ENABLED:
-        print("🤖 Setting up Mr. Bones skeleton connections...")
+        print("🤖 Checking for Mr. Bones skeleton connections...")
         try:
-            # Run skeleton setup (BLE + BT Classic pairing)
-            skeleton_ready = await setup_skeleton_for_client()
+            # Verify BLE service is running (don't start it - should already be running)
+            from skeleton_ble_service import service
             
-            if skeleton_ready:
-                print("✅ Skeleton BLE and BT Classic audio setup complete!")
-                
-                # Initialize movement controller
-                skeleton_controller = await get_skeleton_controller()
-                if skeleton_controller.connected:
-                    print("🎭 Mr. Bones skeleton movement enabled!")
-                else:
-                    print("⚠️ Skeleton setup complete but movement controller failed")
+            if not service.client or not service.client.is_connected:
+                print("❌ FATAL: Skeleton BLE service not running!")
+                print("💡 Start it first: python skeleton_ble_service.py")
+                print("🚫 Exiting - BLE service must be running")
+                sys.exit(1)
             else:
-                print("❌ Skeleton setup failed - movement disabled")
+                print("✅ Skeleton BLE service already running")
+                
+            # Check if Classic BT audio device is connected
+            print("🔍 Verifying Classic BT audio connection...")
+            bt_check = subprocess.run(
+                ["bluetoothctl", "info", "24:F4:95:F4:CA:45"],
+                capture_output=True,
+                text=True
+            )
+            
+            if "Connected: yes" not in bt_check.stdout:
+                print("❌ FATAL: Classic BT audio not connected!")
+                print("💡 Run skeleton_bt_pair.py to pair the audio device")
+                print("🚫 Exiting - no point running without audio")
+                sys.exit(1)
+            
+            print("✅ Classic BT audio verified connected")
+            
+            # Initialize movement controller using the existing service's client
+            skeleton_controller = await get_skeleton_controller()
+            if skeleton_controller and skeleton_controller.connected:
+                print("🎭 Mr. Bones skeleton movement enabled!")
+            else:
+                print("⚠️ Movement controller initialization failed")
                 
         except Exception as e:
-            print(f"⚠️ Skeleton setup error: {e}")
+            print(f"❌ FATAL: Skeleton connection error: {e}")
+            print("💡 Make sure both services are running:")
+            print("  1. python skeleton_ble_service.py (keep running)")
+            print("  2. python skeleton_bt_pair.py (run once)")
+            print("🚫 Exiting - skeleton connections required")
+            sys.exit(1)
     elif not SKELETON_MOVEMENT_ENABLED:
         print("🤖 Skeleton movement disabled via configuration")
     
@@ -560,12 +584,10 @@ async def main():
     except Exception as e:
         print(f"💥 Unexpected error: {e}")
     finally:
-        # Cleanup skeleton connection
+        # Note: Don't disconnect skeleton BLE service - it should stay running
+        # for future client.py sessions and movement control
         if SKELETON_AVAILABLE:
-            try:
-                await disconnect_skeleton()
-            except Exception as e:
-                print(f"⚠️ Error disconnecting skeleton: {e}")
+            print("🔌 Leaving skeleton BLE service running for future sessions")
 
 if __name__ == "__main__":
     asyncio.run(main())

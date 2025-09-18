@@ -161,25 +161,59 @@ async def setup_ble_and_audio(verbose: bool = True):
             print("❌ bluetoothctl not found - install bluez-utils")
             return False
         
-        # Pair with skeleton audio interface
-        pair_commands = f"""
-pair {SKELETON_AUDIO_MAC}
-{SKELETON_AUDIO_PIN}
-yes
-connect {SKELETON_AUDIO_MAC}
-quit
-"""
-        
+        # Interactive pairing with dual scan method (this was the working approach)
         try:
-            process = subprocess.Popen(
-                ["bluetoothctl"],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+            print("  Starting first scan...")
+            
+            # First scan: 20 seconds
+            scan_result = subprocess.run(
+                ["timeout", "20", "bluetoothctl", "--", "scan", "on"],
+                capture_output=True,
                 text=True
             )
             
-            stdout, _ = process.communicate(input=pair_commands, timeout=30)
+            # Give time for Classic BT device to be discovered
+            await asyncio.sleep(15)
+            
+            # Stop scanning temporarily
+            subprocess.run(["bluetoothctl", "scan", "off"], capture_output=True)
+            await asyncio.sleep(2)
+            
+            # Second scan: 15 seconds (this is what you remembered working)
+            print("  Starting second scan for Classic BT device...")
+            scan_result2 = subprocess.run(
+                ["timeout", "15", "bluetoothctl", "--", "scan", "on"],
+                capture_output=True,
+                text=True
+            )
+            await asyncio.sleep(10)
+            
+            # Stop scanning before pairing
+            subprocess.run(["bluetoothctl", "scan", "off"], capture_output=True)
+            await asyncio.sleep(1)
+            
+            # Now try pairing
+            pair_result = subprocess.run(
+                ["bluetoothctl", "pair", SKELETON_AUDIO_MAC],
+                input=f"{SKELETON_AUDIO_PIN}\n",
+                text=True,
+                capture_output=True,
+                timeout=20
+            )
+            
+            # Try connecting
+            connect_result = subprocess.run(
+                ["bluetoothctl", "connect", SKELETON_AUDIO_MAC],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            
+            # Trust the device
+            subprocess.run(["bluetoothctl", "trust", SKELETON_AUDIO_MAC], capture_output=True)
+            
+            # Create combined result for success checking
+            stdout = f"{pair_result.stdout}\n{connect_result.stdout}"
             
             if ("Pairing successful" in stdout or 
                 "Already paired" in stdout or

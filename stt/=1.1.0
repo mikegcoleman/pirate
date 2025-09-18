@@ -1,0 +1,4 @@
+Looking in indexes: https://pypi.org/simple, https://www.piwheels.org/simple
+Requirement already satisfied: bleak in ./venv/lib/python3.11/site-packages (1.1.1)
+Requirement already satisfied: dbus-fast>=1.83.0 in ./venv/lib/python3.11/site-packages (from bleak) (2.44.3)
+Requirement already satisfied: typing-extensions>=4.7.0 in ./venv/lib/python3.11/site-packages (from bleak) (4.15.0)
