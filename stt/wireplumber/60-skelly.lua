@@ -3,7 +3,11 @@
 -- on the Raspberry Pi and restart WirePlumber.
 
 bluez_monitor = bluez_monitor or {}
+bluez_monitor.properties = bluez_monitor.properties or {}
 bluez_monitor.rules = bluez_monitor.rules or {}
+
+-- Disable SBC-XQ globally; Skelly's chipset chokes on the higher bandwidth profile.
+bluez_monitor.properties["bluez5.enable-sbc-xq"] = false
 
 -- Restrict the Skelly card to standard SBC with a mild bitpool range.
 table.insert(bluez_monitor.rules, 1, {
@@ -15,7 +19,7 @@ table.insert(bluez_monitor.rules, 1, {
   apply_properties = {
     ["bluez5.codecs"] = "[ sbc ]",
     ["bluez5.a2dp.sbc-min-bitpool"] = 32,
-    ["bluez5.a2dp.sbc-max-bitpool"] = 53,
+    ["bluez5.a2dp.sbc-max-bitpool"] = 32,
   },
 })
 
@@ -28,6 +32,6 @@ table.insert(bluez_monitor.rules, 1, {
   },
   apply_properties = {
     ["bluez5.a2dp.sbc-min-bitpool"] = 32,
-    ["bluez5.a2dp.sbc-max-bitpool"] = 53,
+    ["bluez5.a2dp.sbc-max-bitpool"] = 32,
   },
 })

@@ -1,0 +1,69 @@
+Reboot Checklist – Skelly Audio
+================================
+
+Context (2025-09-22): SBC bitpool forced to 32 in `stt/wireplumber/60-skelly.lua` and deployed to
+`~/.config/wireplumber/bluetooth.lua.d/60-skelly.lua`.
+
+After the system comes back up:
+
+1. Start the BLE service so Classic BT mode is enabled:
+      cd ~/pirate && stdbuf -oL stt/venv/bin/python stt/skeleton_ble_service.py
+   Wait for the log line: "BLE Service running: movement control available, Classic BT audio enabled".
+
+2. Pair the speaker once BLE reports ready:
+      bluetoothctl connect 24:F4:95:F4:CA:45
+
+3. Confirm PipeWire is using the fixed SBC profile:
+      wpctl inspect @DEFAULT_AUDIO_SINK@ | grep -E "codec|bitpool"
+   Expect `api.bluez5.codec = sbc` and both bitpool min/max = 32.
+
+4. Run a short playback test (Paplay or the main client) to check for dropouts.
+
+If audio still stutters, be ready to coordinate on next tweaks (e.g., lowering blocksize in `.env`,
+forcing mono resample, or exploring SBC dual-channel vs. mono via pactl).
+
+------------------------------------------------------------
+
+Troubleshooting Context Snapshot
+--------------------------------
+
+Original Instructions / information:
+
+Hardware & Setup
+- Raspberry Pi 5 running Debian/Raspberry Pi OS
+- Animated Skelly prop with onboard Bluetooth speaker (MAC: 24:F4:95:F4:CA:45)
+- BLE used for movement control, Bluetooth Classic (A2DP) for audio playback
+- Audio pipeline: ElevenLabs TTS → Python → Pi → PipeWire → BlueZ → A2DP → Skelly
+
+Symptoms
+- Audio from Pi → Skelly = broken speech with dropouts (10–15% of stream)
+- Audio from iPhone/Mac/Windows PC → Skelly = flawless
+- Audio from Pi → normal BT speaker (Creative Stage SE) = flawless
+- Distance ~6 feet, RSSI good (≈ –48)
+- Clipping only occurs on Skelly, not other speakers
+
+Diagnosis so far
+- Skelly only advertises A2DP (SBC), AVRCP, and SPP — no AAC, no HFP/HSP
+- PipeWire defaults to SBC-XQ (extended quality), which runs 500–600 kbps bursts
+- Skelly’s cheap BT chip/jitter buffer cannot handle SBC-XQ → causes dropouts
+- Windows/macOS/iOS use AAC or conservative SBC bitpool (~192–328 kbps), which Skelly handles fine
+- Raspberry Pi 5 has plenty of CPU (proved by Creative Stage SE working fine) → not a horsepower issue
+
+Attempts
+- Tried forcing AAC (not supported by Skelly) → failed
+- Tried disabling SBC-XQ in WirePlumber overrides → sometimes broke profiles (no valid sink), sometimes not applied
+- pactl didn’t always show card profiles; PipeWire sometimes exposed sink directly as bluez_output.…
+- Playback tests (pw-cat) confirmed: Creative Stage SE = clean, Skelly = clipped
+
+Conclusion
+- Issue is Linux defaults (PipeWire + BlueZ using SBC-XQ), not Pi hardware
+- Any Linux box (Pi or x86) will exhibit the same problem with Skelly unless profile/bitpool is forced
+
+Next Step Needed
+- Configure WirePlumber/PipeWire to:
+  • Force plain SBC (disable SBC-XQ)
+  • Cap bitpool range (e.g. min 32, max 53 ≈ 192–328 kbps)
+  • Confirm applied settings via wpctl inspect or pw-dump
+
+👉 Paste this into Codex and then ask:
+“How do I configure WirePlumber 1.2.x so that my Bluetooth sink bluez_output.24_F4_95_F4_CA_45.1 always uses plain SBC with bitpool capped at 32–53?”
