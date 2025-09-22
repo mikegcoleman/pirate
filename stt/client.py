@@ -118,105 +118,50 @@ validate_environment()
 API_URL = os.getenv("API_URL")
 LLM_MODEL = os.getenv("LLM_MODEL")
 
-def play_wav_bytes(wav_bytes: bytes, sink_name: Optional[str] = None):
-    """
-    Play WAV audio bytes directly through PulseAudio.
-    
-    Args:
-        wav_bytes: Raw WAV file bytes
-        sink_name: Optional PulseAudio sink name (e.g., "bluez_output.24_F4_95_F4_CA_45.1")
-                  If None, uses default sink.
-    
-    Returns:
-        bool: True if playback succeeded, False otherwise
-    """
+def _play_with_paplay(audio_bytes: bytes, sink_name: Optional[str] = None, suffix: str = ".tmp") -> bool:
+    """Write audio bytes to a temp file and hand them directly to paplay."""
+    tmp_path: Optional[str] = None
     try:
-        # Create temporary WAV file
-        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_file:
-            tmp_file.write(wav_bytes)
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp_file:
+            tmp_file.write(audio_bytes)
             tmp_file.flush()
             os.fsync(tmp_file.fileno())
-            
-            try:
-                # Build paplay command with volume boost
-                cmd = [AUDIO_PLAYER]
-                if sink_name:
-                    cmd.extend(["--device", sink_name])
-                # Add volume boost for better audibility
-                cmd.extend(["--volume", "65536"])  # Max volume
-                cmd.append(tmp_file.name)
-                
-                # Play audio (blocking)
-                result = subprocess.run(cmd, capture_output=True, text=True)
-                
-                if result.returncode == 0:
-                    return True
-                else:
-                    print(f"❌ Audio playback failed (exit code {result.returncode})")
-                    if result.stderr:
-                        print(f"   Error: {result.stderr.strip()}")
-                    return False
-                    
-            finally:
-                # Clean up temporary file
-                try:
-                    os.unlink(tmp_file.name)
-                except OSError:
-                    pass
-                    
-    except Exception as e:
-        print(f"❌ Error playing WAV bytes: {e}")
-        return False
+            tmp_path = tmp_file.name
 
-def play_any_bytes(audio_bytes: bytes, sink_name: Optional[str] = None):
-    """
-    Play audio bytes of unknown format (MP3, OGG, Opus, etc.) by piping through FFmpeg to PulseAudio.
-    
-    Args:
-        audio_bytes: Raw audio file bytes (any format supported by FFmpeg)
-        sink_name: Optional PulseAudio sink name (e.g., "bluez_output.24_F4_95_F4_CA_45.1")
-                  If None, uses default sink.
-    
-    Returns:
-        bool: True if playback succeeded, False otherwise
-    """
-    try:
-        # Build paplay command with volume boost
-        paplay_cmd = [AUDIO_PLAYER]
+        cmd = [AUDIO_PLAYER]
         if sink_name:
-            paplay_cmd.extend(["--device", sink_name])
-        # Add volume boost for better audibility  
-        paplay_cmd.extend(["--volume", "65536"])  # Max volume
-        
-        # Create pipeline: ffmpeg stdin → wav stdout → paplay stdin
-        pipeline_cmd = [
-            "bash", "-c",
-            f"ffmpeg -hide_banner -loglevel error -i pipe:0 -f wav - | {' '.join(paplay_cmd)}"
-        ]
-        
-        # Execute pipeline
-        process = subprocess.Popen(
-            pipeline_cmd,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=False  # Binary data
-        )
-        
-        # Feed audio bytes to FFmpeg and get result
-        stdout, stderr = process.communicate(input=audio_bytes)
-        
-        if process.returncode == 0:
+            cmd.extend(["--device", sink_name])
+        cmd.extend(["--volume", "65536"])  # Max volume
+        if tmp_path is not None:
+            cmd.append(tmp_path)
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode == 0:
             return True
-        else:
-            print(f"❌ Audio pipeline failed (exit code {process.returncode})")
-            if stderr:
-                print(f"   Error: {stderr.decode().strip()}")
-            return False
-            
-    except Exception as e:
-        print(f"❌ Error playing audio bytes: {e}")
+
+        print(f"❌ Audio playback failed (exit code {result.returncode})")
+        if result.stderr:
+            print(f"   Error: {result.stderr.strip()}")
         return False
+    except Exception as exc:
+        print(f"❌ Error playing audio bytes: {exc}")
+        return False
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+
+
+def play_wav_bytes(wav_bytes: bytes, sink_name: Optional[str] = None) -> bool:
+    """Play WAV bytes using paplay."""
+    return _play_with_paplay(wav_bytes, sink_name, suffix=".wav")
+
+
+def play_any_bytes(audio_bytes: bytes, sink_name: Optional[str] = None) -> bool:
+    """Play arbitrary audio bytes (e.g. MP3) using paplay directly."""
+    return _play_with_paplay(audio_bytes, sink_name, suffix=".mp3")
 
 def connect_bluetooth_speaker():
     """Connect to Bluetooth speaker if configured."""
