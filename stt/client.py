@@ -34,6 +34,7 @@ import tempfile
 import queue
 import threading
 import time
+from functools import partial
 from typing import Optional
 
 # Load environment
@@ -94,7 +95,21 @@ def validate_environment():
         int(os.getenv("WAIT_INTERVAL", "3"))
     except ValueError:
         errors.append("WAIT_INTERVAL must be a valid integer (seconds)")
-    
+
+    try:
+        conv_length = int(os.getenv("CONVERSATION_LENGTH", "180"))
+        if conv_length <= 0:
+            errors.append("CONVERSATION_LENGTH must be greater than zero")
+    except ValueError:
+        errors.append("CONVERSATION_LENGTH must be a valid integer (seconds)")
+
+    try:
+        max_silence = int(os.getenv("MAX_SILENCE", "30"))
+        if max_silence <= 0:
+            errors.append("MAX_SILENCE must be greater than zero")
+    except ValueError:
+        errors.append("MAX_SILENCE must be a valid integer (seconds)")
+
     # Validate audio player
     audio_player = os.getenv("AUDIO_PLAYER", "paplay")
     try:
@@ -117,6 +132,19 @@ validate_environment()
 # Environment variables (now guaranteed to be valid)
 API_URL = os.getenv("API_URL")
 LLM_MODEL = os.getenv("LLM_MODEL")
+CONVERSATION_LENGTH = max(1, int(os.getenv("CONVERSATION_LENGTH", "180")))
+MAX_SILENCE = max(1, int(os.getenv("MAX_SILENCE", "30")))
+
+CONVERSATION_CONCLUSION_PROMPTS = {
+    "time_limit": (
+        "In character as Mister Bones, let the guest know their three minutes are up, "
+        "thank them for the chat, and invite the next matey to step forward."
+    ),
+    "silence": (
+        "In character as Mister Bones, comment that no one seems to be around, say you are "
+        "heading back to sleep, and gently invite them to wake you again later."
+    ),
+}
 
 def _play_with_paplay(audio_bytes: bytes, sink_name: Optional[str] = None, suffix: str = ".tmp") -> bool:
     """Write audio bytes to a temp file and hand them directly to paplay."""
@@ -162,6 +190,39 @@ def play_wav_bytes(wav_bytes: bytes, sink_name: Optional[str] = None) -> bool:
 def play_any_bytes(audio_bytes: bytes, sink_name: Optional[str] = None) -> bool:
     """Play arbitrary audio bytes (e.g. MP3) using paplay directly."""
     return _play_with_paplay(audio_bytes, sink_name, suffix=".mp3")
+
+
+async def play_conversation_conclusion(reason: str, system_prompt: str) -> None:
+    """Play a closing line for the current conversation."""
+    prompt_text = CONVERSATION_CONCLUSION_PROMPTS.get(reason)
+    if not prompt_text:
+        print(f"⚠️ No conclusion prompt configured for reason: {reason}")
+        return
+
+    chat_request = {
+        "model": LLM_MODEL,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt_text},
+        ],
+    }
+
+    try:
+        print(f"🕰️ Playing conversation closer for reason: {reason}")
+        await send_streaming_request(
+            chat_request,
+            start_time=time.time(),
+            sink_name_override=resolve_sink_name(),
+        )
+    except Exception as exc:
+        print(f"⚠️ Failed to play conversation conclusion ({reason}): {exc}")
+
+
+def resolve_sink_name() -> Optional[str]:
+    """Return the PulseAudio sink name for the configured Bluetooth speaker."""
+    if BLUETOOTH_SPEAKER:
+        return f"bluez_output.{BLUETOOTH_SPEAKER.replace(':', '_')}.1"
+    return None
 
 def connect_bluetooth_speaker():
     """Connect to Bluetooth speaker if configured."""
@@ -466,40 +527,90 @@ async def main():
     
     # Initialize conversation
     messages = [{"role": "system", "content": system_prompt}]
-    
+
+    loop = asyncio.get_running_loop()
+    conversation_start = None
+    conversation_deadline = None
+
+    def reset_conversation():
+        nonlocal messages, conversation_start, conversation_deadline
+        was_active = conversation_start is not None or len(messages) > 1
+        messages = [{"role": "system", "content": system_prompt}]
+        conversation_start = None
+        conversation_deadline = None
+        if was_active:
+            print("🧹 Conversation memory cleared.")
+
+    async def conclude_and_reset(reason: str):
+        if conversation_start is None:
+            reset_conversation()
+            return
+        try:
+            await play_conversation_conclusion(reason, system_prompt)
+        except Exception as exc:
+            print(f"⚠️ Unable to play {reason} outro: {exc}")
+        finally:
+            reset_conversation()
+
+    reset_conversation()
+
     try:
         while True:
             print(f"\n{'='*20} NEW INTERACTION {'='*20}")
-            
-            # Get speech input using stt module
+
             import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 print("🎤 Listening for speech...")
-                result = await asyncio.get_event_loop().run_in_executor(executor, stt.transcribe)
-                
-            if result is None or result[0] is None:
+                result = await loop.run_in_executor(
+                    executor,
+                    partial(stt.transcribe, max_silence=MAX_SILENCE),
+                )
+
+            if not result:
                 print("❌ No speech detected, trying again...")
                 continue
-            
-            user_text, confidence = result
+
+            user_text, confidence, reason = result
+
+            if reason == "silence_timeout":
+                if conversation_start is not None:
+                    print("😴 No new question for a while. Wrapping up this chat.")
+                    await conclude_and_reset("silence")
+                else:
+                    print("⌛ Still waiting for a matey to speak up...")
+                continue
+
+            if reason == "cancelled":
+                print("🛑 Transcription cancelled by user. Exiting loop.")
+                break
+
+            if reason != "success" and user_text is None:
+                print("❌ Transcription error, trying again...")
+                continue
+
+            if user_text is None:
+                print("❌ No speech detected, trying again...")
+                continue
+
             print(f"🗣️ User said: '{user_text}'")
             if confidence is not None:
                 print(f"   Confidence: {confidence:.2f}")
-            
-            # Record start time for performance measurement
+
+            if conversation_start is None:
+                conversation_start = time.time()
+                conversation_deadline = conversation_start + CONVERSATION_LENGTH
+                print(f"⏳ Conversation timer started ({CONVERSATION_LENGTH}s limit)")
+
             start_time = time.time()
-            
-            # Add user message
+
             messages.append({"role": "user", "content": user_text})
-            
-            # Prepare API request
+
             chat_request = {
                 "model": LLM_MODEL,
                 "messages": messages
             }
-            
-            # Trigger skeleton movement when starting to speak
-            if (SKELETON_MOVEMENT_ENABLED and 
+
+            if (SKELETON_MOVEMENT_ENABLED and
                 skeleton_controller and skeleton_controller.connected):
                 try:
                     movement_triggered = await skeleton_controller.trigger_speech_movement()
@@ -507,23 +618,27 @@ async def main():
                         print("🎭 Mr. Bones movement triggered!")
                 except Exception as e:
                     print(f"⚠️ Skeleton movement error: {e}")
-            
-            # Start request
+
             print("🎭 Starting response generation...")
             response_data = await send_streaming_request(chat_request, start_time)
-            
+
             if response_data:
                 clean_response = remove_nonstandard(response_data["response"])
                 print(f"🏴‍☠️ Mr. Bones: {clean_response}")
                 print(f"📊 Performance: {response_data['chunks_received']}/{response_data['total_chunks']} chunks")
-                
+
                 messages.append({
-                    "role": "assistant", 
+                    "role": "assistant",
                     "content": clean_response
                 })
+
+                if conversation_deadline and time.time() >= conversation_deadline:
+                    print("⏰ Conversation time limit reached. Resetting memory.")
+                    await conclude_and_reset("time_limit")
+                    continue
             else:
                 print("❌ Failed to get response, trying again...")
-                
+
     except KeyboardInterrupt:
         print("\n👋 Goodbye! Mr. Bones is going back to sleep...")
     except Exception as e:

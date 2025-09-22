@@ -19,6 +19,8 @@ import sys
 import json
 import queue
 import time
+from typing import Optional, Tuple
+
 import sounddevice as sd
 
 try:
@@ -121,25 +123,27 @@ def should_process_transcription(text, confidence=None):
     
     return True
 
-def transcribe():
+def transcribe(max_silence: Optional[int] = None) -> Tuple[Optional[str], Optional[float], str]:
     """
     Perform real-time speech-to-text transcription.
-    
+
     Returns:
-        tuple: (final_text, confidence) or (None, None) if no speech detected
+        tuple: (final_text, confidence, reason)
+               reason is "success", "silence_timeout", "cancelled", or "error"
     """
     setup_audio()
     recognizer = load_vosk_model()
-    
+
     # Clear any existing audio data
     while not audio_queue.empty():
         audio_queue.get()
-    
+
     print("\n🎤 Listening for speech... (Press Ctrl+C to stop)")
-    
+
     last_partial_time = 0
     partial_throttle_interval = 0.5  # Print partials every 500ms max
-    
+    last_audio_time = time.time()
+
     try:
         with sd.RawInputStream(callback=audio_callback, 
                               blocksize=BLOCKSIZE,
@@ -151,6 +155,7 @@ def transcribe():
                 try:
                     # Get audio data from queue (blocking with timeout)
                     data = audio_queue.get(timeout=1.0)
+                    last_audio_time = time.time()
                     
                     if recognizer.AcceptWaveform(data):
                         # Final recognition result
@@ -162,7 +167,7 @@ def transcribe():
                             print(f"\n✅ Final: {final_text}")
                             if confidence is not None:
                                 print(f"   Confidence: {confidence:.2f}")
-                            return final_text, confidence
+                            return final_text, confidence, "success"
                     
                     else:
                         # Partial recognition result (throttled output)
@@ -174,18 +179,23 @@ def transcribe():
                             if partial_text:
                                 print(f"🔄 Partial: {partial_text}", end='\r')
                                 last_partial_time = current_time
-                
+
                 except queue.Empty:
                     # Timeout - check if we should continue
+                    if max_silence is not None:
+                        now = time.time()
+                        if now - last_audio_time >= max_silence:
+                            print("\n⌛ Silence timeout reached - no speech detected")
+                            return None, None, "silence_timeout"
                     continue
                     
                 except KeyboardInterrupt:
                     print("\n\n👋 Transcription stopped by user")
-                    return None, None
+                    return None, None, "cancelled"
                     
     except Exception as e:
         print(f"\n❌ Error during transcription: {e}")
-        return None, None
+        return None, None, "error"
 
 def main():
     """Main function for standalone testing."""
@@ -200,15 +210,18 @@ def main():
     
     while True:
         try:
-            result = transcribe()
-            
-            if result[0] is not None:
-                final_text, confidence = result
+            final_text, confidence, reason = transcribe()
+
+            if reason == "success" and final_text is not None:
                 print(f"\nTranscribed: '{final_text}'")
                 if confidence is not None:
                     print(f"Confidence: {confidence:.2f}")
+            elif reason == "silence_timeout":
+                print("No speech detected before the silence timeout")
+            elif reason == "cancelled":
+                print("Transcription cancelled by user")
             else:
-                print("No speech detected or transcription cancelled")
+                print("No speech detected or transcription failed")
             
             # Ask if user wants to continue
             try:
