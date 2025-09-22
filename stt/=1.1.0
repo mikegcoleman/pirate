@@ -1,4 +1,8 @@
 Looking in indexes: https://pypi.org/simple, https://www.piwheels.org/simple
-Requirement already satisfied: bleak in ./venv/lib/python3.11/site-packages (1.1.1)
-Requirement already satisfied: dbus-fast>=1.83.0 in ./venv/lib/python3.11/site-packages (from bleak) (2.44.3)
+Collecting bleak
+  Using cached https://www.piwheels.org/simple/bleak/bleak-1.1.1-py3-none-any.whl (136 kB)
+Collecting dbus-fast>=1.83.0
+  Using cached dbus_fast-2.44.3-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl (879 kB)
 Requirement already satisfied: typing-extensions>=4.7.0 in ./venv/lib/python3.11/site-packages (from bleak) (4.15.0)
+Installing collected packages: dbus-fast, bleak
+Successfully installed bleak-1.1.1 dbus-fast-2.44.3
