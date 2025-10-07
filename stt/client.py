@@ -277,17 +277,22 @@ class StreamingAudioPlayer:
     def start_playback(self):
         """Start the playback thread."""
         if self.play_thread and self.play_thread.is_alive():
+            print("⚠️ StreamingAudioPlayer thread already running")
             return
         
+        self.is_playing = True
         self.stop_event.clear()
         self.play_thread = threading.Thread(target=self._playback_worker, daemon=True)
         self.play_thread.start()
+        print("🔊 StreamingAudioPlayer thread started")
     
     def stop_playback(self):
         """Stop the playback thread."""
         self.stop_event.set()
         if self.play_thread:
             self.play_thread.join(timeout=2)
+        self.is_playing = False
+        print("🔊 StreamingAudioPlayer stopped")
     
     def add_audio_chunk(self, audio_base64: str, chunk_id: int):
         """Add an audio chunk to the playback queue."""
@@ -301,6 +306,7 @@ class StreamingAudioPlayer:
     def _playback_worker(self):
         """Worker thread that plays audio chunks in sequence using the new audio helpers."""
         print("🔊 Audio playback worker started")
+        chunks_played = 0
         
         while not self.stop_event.is_set():
             try:
@@ -319,7 +325,8 @@ class StreamingAudioPlayer:
                     success = play_any_bytes(audio_bytes, self.sink_name)
                 
                 if success:
-                    print(f"✅ Completed chunk {chunk_id}")
+                    chunks_played += 1
+                    print(f"✅ Completed chunk {chunk_id} (total played: {chunks_played})")
                 else:
                     print(f"⚠️ Failed to play chunk {chunk_id}")
                 
@@ -329,6 +336,8 @@ class StreamingAudioPlayer:
                 continue  # Check stop_event and try again
             except Exception as e:
                 print(f"❌ Error in audio playback: {e}")
+        
+        print(f"🔊 Audio playback worker finished (played {chunks_played} chunks)")
     
     def wait_for_completion(self):
         """Wait for all queued audio to finish playing."""
@@ -403,6 +412,7 @@ async def send_streaming_request(chat_request, start_time=None, sink_name_overri
                     print(f"🔊 Audio routing to: {sink_name}")
                 
                 audio_player.start_playback()
+                print(f"🔊 StreamingAudioPlayer started: {audio_player.play_thread is not None}")
                 
                 # Process streaming response
                 async for line in response.aiter_lines():
@@ -427,6 +437,7 @@ async def send_streaming_request(chat_request, start_time=None, sink_name_overri
                                     if filler_player:
                                         print("🛑 Stopping filler - Mr. Bones response ready!")
                                         filler_player.stop_filler()
+                                        print("✅ Filler stopped, audio device should be available")
                                     
                                     if start_time:
                                         time_to_first_audio = first_chunk_time - start_time
@@ -437,6 +448,7 @@ async def send_streaming_request(chat_request, start_time=None, sink_name_overri
                                 print(f"📦 Received chunk {chunk_id}/{total_chunks}: '{text_chunk[:30]}...'")
                                 audio_player.add_audio_chunk(audio_base64, chunk_id)
                                 received_chunks += 1
+                                print(f"🎵 Queue size after adding chunk: {audio_player.audio_queue.qsize()}")
                                 
                             elif data['type'] == 'complete':
                                 print(f"✅ Stream complete: {received_chunks}/{total_chunks} chunks received")
@@ -452,6 +464,8 @@ async def send_streaming_request(chat_request, start_time=None, sink_name_overri
                 
                 # Wait for all audio to finish playing
                 print("⏳ Waiting for audio playback to complete...")
+                print(f"🔍 Audio player thread alive: {audio_player.play_thread and audio_player.play_thread.is_alive()}")
+                print(f"🔍 Queue size before waiting: {audio_player.audio_queue.qsize()}")
                 audio_player.wait_for_completion()
                 audio_player.stop_playback()
                 

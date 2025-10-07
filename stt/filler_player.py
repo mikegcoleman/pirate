@@ -102,7 +102,33 @@ class FillerPlayer:
             cmd.append(tmp_path)
             
             # Play the audio (this blocks until playback completes or is interrupted)
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            # Use Popen so we can terminate if needed
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            
+            # Poll the process until it completes or we're asked to stop
+            while process.poll() is None:
+                if self.stop_event.is_set():
+                    # Terminate the audio playback process
+                    process.terminate()
+                    try:
+                        process.wait(timeout=1.0)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait()
+                    break
+                time.sleep(0.05)  # Small delay to avoid busy waiting
+            
+            # Get the result
+            if process.returncode is None:
+                # Process was terminated
+                return False
+            
+            stdout, stderr = process.communicate()
+            result = type('Result', (), {
+                'returncode': process.returncode, 
+                'stdout': stdout, 
+                'stderr': stderr
+            })()
             
             # Clean up temporary file
             try:
@@ -183,6 +209,10 @@ class FillerPlayer:
             self.play_thread.join(timeout=2.0)
         
         self.is_playing = False
+        
+        # Brief delay to allow audio device to be released
+        import time
+        time.sleep(0.1)
     
     def is_filler_playing(self) -> bool:
         """Check if a filler is currently playing."""
