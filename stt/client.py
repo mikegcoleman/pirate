@@ -69,6 +69,7 @@ SKELETON_MOVEMENT_COOLDOWN = int(os.getenv("SKELETON_MOVEMENT_COOLDOWN", "10"))
 
 # Filler Configuration
 FILLER_ENABLED = os.getenv("FILLER_ENABLED", "true").lower() == "true"
+POST_FILLER_DELAY = float(os.getenv("POST_FILLER_DELAY", "0.5"))  # Delay in seconds after filler stops
 
 def validate_environment():
     """Validate all required environment variables and configuration."""
@@ -115,6 +116,13 @@ def validate_environment():
             errors.append("MAX_SILENCE must be greater than zero")
     except ValueError:
         errors.append("MAX_SILENCE must be a valid integer (seconds)")
+
+    try:
+        post_filler_delay = float(os.getenv("POST_FILLER_DELAY", "0.5"))
+        if post_filler_delay < 0:
+            errors.append("POST_FILLER_DELAY must be non-negative")
+    except ValueError:
+        errors.append("POST_FILLER_DELAY must be a valid number (seconds)")
 
     # Validate audio player
     audio_player = os.getenv("AUDIO_PLAYER", "paplay")
@@ -415,10 +423,13 @@ async def send_streaming_request(chat_request, start_time=None, sink_name_overri
                 print(f"🔊 StreamingAudioPlayer started: {audio_player.play_thread is not None}")
                 
                 # Process streaming response
+                line_count = 0
                 async for line in response.aiter_lines():
+                    line_count += 1
                     if line.startswith("data: "):
                         try:
                             data = json.loads(line[6:])  # Remove "data: " prefix
+                            print(f"🔍 Line {line_count}: Received stream data type: {data.get('type', 'unknown')}")
                             
                             if data['type'] == 'metadata':
                                 total_chunks = data['total_chunks']
@@ -438,6 +449,11 @@ async def send_streaming_request(chat_request, start_time=None, sink_name_overri
                                         print("🛑 Stopping filler - Mr. Bones response ready!")
                                         filler_player.stop_filler()
                                         print("✅ Filler stopped, audio device should be available")
+                                        
+                                        # Add natural pause after filler
+                                        if POST_FILLER_DELAY > 0:
+                                            print(f"⏸️ Natural pause: {POST_FILLER_DELAY}s")
+                                            await asyncio.sleep(POST_FILLER_DELAY)
                                     
                                     if start_time:
                                         time_to_first_audio = first_chunk_time - start_time
@@ -452,15 +468,29 @@ async def send_streaming_request(chat_request, start_time=None, sink_name_overri
                                 
                             elif data['type'] == 'complete':
                                 print(f"✅ Stream complete: {received_chunks}/{total_chunks} chunks received")
+                                if received_chunks == 0:
+                                    print("⚠️ WARNING: Stream completed but no audio chunks were received!")
                                 break
                                 
                             elif data['type'] == 'error':
                                 print(f"❌ Stream error: {data['message']}")
                                 return None
                                 
+                            elif data['type'] == 'chunk_error':
+                                error_msg = data.get('message', 'Unknown chunk error')
+                                chunk_id = data.get('chunk_id', 'unknown')
+                                print(f"❌ Chunk {chunk_id} error: {error_msg}")
+                                # Continue processing - don't fail the entire stream for chunk errors
+                                
+                            else:
+                                print(f"⚠️ Unknown stream data type: {data['type']}")
+                                print(f"   Data: {data}")
+                                
                         except json.JSONDecodeError as e:
-                            print(f"⚠️ Failed to parse streaming data: {e}")
+                            print(f"⚠️ Line {line_count}: Failed to parse as JSON: {line[:100]}...")
                             continue
+                    else:
+                        print(f"🔍 Line {line_count}: Non-data line: {line[:100]}...")
                 
                 # Wait for all audio to finish playing
                 print("⏳ Waiting for audio playback to complete...")
