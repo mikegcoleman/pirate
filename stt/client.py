@@ -408,9 +408,13 @@ async def send_streaming_request(chat_request, start_time=None, sink_name_overri
                 print(f"🏷️  Content-Type: {response.headers.get('content-type', 'unknown')}")
                 
                 if response.status_code != 200:
-                    # Stop filler on error
-                    if filler_player:
-                        filler_player.stop_filler()
+                    # Wait for filler to complete naturally even on HTTP error
+                    if filler_player and filler_player.is_filler_playing():
+                        print("⏳ Waiting for filler to complete before handling HTTP error...")
+                        while filler_player.is_filler_playing():
+                            await asyncio.sleep(0.1)
+                        print("✅ Filler completed")
+                    
                     error_text = await response.aread()
                     print(f"❌ Stream error: {error_text.decode()}")
                     return None
@@ -444,22 +448,24 @@ async def send_streaming_request(chat_request, start_time=None, sink_name_overri
                                 if first_chunk_time is None:
                                     first_chunk_time = time.time()
                                     
-                                    # Stop filler when we receive first audio chunk
-                                    if filler_player:
-                                        print("🛑 Stopping filler - Mr. Bones response ready!")
-                                        filler_player.stop_filler()
-                                        print("✅ Filler stopped, audio device should be available")
-                                        
-                                        # Add natural pause after filler
-                                        if POST_FILLER_DELAY > 0:
-                                            print(f"⏸️ Natural pause: {POST_FILLER_DELAY}s")
-                                            await asyncio.sleep(POST_FILLER_DELAY)
-                                    
                                     if start_time:
                                         time_to_first_audio = first_chunk_time - start_time
                                         print(f"⚡ FIRST AUDIO READY in {time_to_first_audio:.2f}s!")
                                     else:
                                         print(f"⚡ FIRST CHUNK RECEIVED - Ready to play!")
+                                    
+                                    # Wait for filler to complete naturally, then add pause
+                                    if filler_player:
+                                        print("⏳ Waiting for filler phrase to complete naturally...")
+                                        while filler_player.is_filler_playing():
+                                            await asyncio.sleep(0.1)  # Check every 100ms
+                                        
+                                        print("✅ Filler completed naturally")
+                                        
+                                        # Add natural pause after filler
+                                        if POST_FILLER_DELAY > 0:
+                                            print(f"⏸️ Natural pause: {POST_FILLER_DELAY}s")
+                                            await asyncio.sleep(POST_FILLER_DELAY)
                                 
                                 print(f"📦 Received chunk {chunk_id}/{total_chunks}: '{text_chunk[:30]}...'")
                                 audio_player.add_audio_chunk(audio_base64, chunk_id)
@@ -470,10 +476,25 @@ async def send_streaming_request(chat_request, start_time=None, sink_name_overri
                                 print(f"✅ Stream complete: {received_chunks}/{total_chunks} chunks received")
                                 if received_chunks == 0:
                                     print("⚠️ WARNING: Stream completed but no audio chunks were received!")
+                                    
+                                    # Still wait for filler to complete naturally even if no audio chunks
+                                    if filler_player and filler_player.is_filler_playing():
+                                        print("⏳ Waiting for filler phrase to complete naturally...")
+                                        while filler_player.is_filler_playing():
+                                            await asyncio.sleep(0.1)
+                                        print("✅ Filler completed naturally")
                                 break
                                 
                             elif data['type'] == 'error':
                                 print(f"❌ Stream error: {data['message']}")
+                                
+                                # Wait for filler to complete even on error
+                                if filler_player and filler_player.is_filler_playing():
+                                    print("⏳ Waiting for filler to complete before handling error...")
+                                    while filler_player.is_filler_playing():
+                                        await asyncio.sleep(0.1)
+                                    print("✅ Filler completed")
+                                
                                 return None
                                 
                             elif data['type'] == 'chunk_error':
@@ -507,20 +528,38 @@ async def send_streaming_request(chat_request, start_time=None, sink_name_overri
                 
     except httpx.TimeoutException:
         print(f"⏱️ Request timed out after {TIMEOUT} seconds")
-        if filler_player:
-            filler_player.stop_filler()
+        
+        # Wait for filler to complete naturally even on timeout
+        if filler_player and filler_player.is_filler_playing():
+            print("⏳ Waiting for filler to complete before handling timeout...")
+            while filler_player.is_filler_playing():
+                await asyncio.sleep(0.1)
+            print("✅ Filler completed")
+        
         audio_player.stop_playback()
         return None
     except httpx.ConnectError as e:
         print(f"🔌 Connection failed: {e}")
-        if filler_player:
-            filler_player.stop_filler()
+        
+        # Wait for filler to complete naturally even on connection error
+        if filler_player and filler_player.is_filler_playing():
+            print("⏳ Waiting for filler to complete before handling connection error...")
+            while filler_player.is_filler_playing():
+                await asyncio.sleep(0.1)
+            print("✅ Filler completed")
+        
         audio_player.stop_playback()
         return None
     except Exception as e:
         print(f"💥 Unexpected error: {e}")
-        if filler_player:
-            filler_player.stop_filler()
+        
+        # Wait for filler to complete naturally even on unexpected error
+        if filler_player and filler_player.is_filler_playing():
+            print("⏳ Waiting for filler to complete before handling error...")
+            while filler_player.is_filler_playing():
+                await asyncio.sleep(0.1)
+            print("✅ Filler completed")
+        
         audio_player.stop_playback()
         return None
 
