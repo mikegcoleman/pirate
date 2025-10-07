@@ -57,13 +57,21 @@ pirate/
 - Prevents disk space issues
 - **Status**: ✅ Implemented
 
-### 5. Environment Variable Validation
+### 5. Filler Phrase System (New Feature)
+- Pre-recorded engaging phrases during API delays
+- 25 pirate-themed filler audio clips
+- Random selection with no immediate repeats
+- Thread-safe playback with interrupt capability
+- Respects audio routing configuration
+- **Status**: ✅ Implemented
+
+### 6. Environment Variable Validation
 - Comprehensive startup validation
 - Range checking for numeric values
 - File and tool availability checks
 - **Status**: ✅ Implemented
 
-### 6. TTS Integration (Kokoro)
+### 7. TTS Integration (Kokoro)
 - Character-focused TTS engine
 - Automatic model downloading
 - GPU/CPU acceleration support
@@ -117,9 +125,24 @@ MIC_DEVICE=default      # Platform-specific
 BLOCKSIZE=8000          # 4000 for Pi, 8000 for Mac/Windows
 ```
 
+### Filler Phrases Configuration
+```bash
+FILLER_ENABLED=true     # Enable engaging filler phrases during API delays
+```
+
 ## Recent Changes
 
-### Model Comparison Test Restructuring (Current Session)
+### Filler Phrase System Implementation (Current Session)
+- ✅ Created comprehensive filler playback system with 25 pre-recorded phrases
+- ✅ Integrated filler player into main client.py to play during API delays
+- ✅ Added thread-safe playback with interrupt capability when response arrives
+- ✅ Random phrase selection with no immediate repeats for variety
+- ✅ Respects existing audio routing (Bluetooth speaker, skeleton audio)
+- ✅ Added FILLER_ENABLED environment variable for easy control
+- ✅ Full testing suite to verify functionality across scenarios
+- 🎭 **Impact**: Mr. Bones now feels much more responsive during processing delays
+
+### Model Comparison Test Restructuring (Previous Session)
 - ✅ Restructured `models_list.json` to separate DMR and OpenAI models into `"dmr"` and `"openai"` sections
 - ✅ Updated `model_comparison_test.py` to route requests to correct provider based on model categorization
 - ❌ **BLOCKER**: Windows machine (192.168.50.66:12434) Docker Model Runner not responding - need to start DMR service

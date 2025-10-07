@@ -21,3 +21,6 @@ BLOCKSIZE=4000
 
 # Prompt Configuration
 PROMPT_FILE=prompt.txt
+
+# Filler Phrases Configuration
+FILLER_ENABLED=true  # Play engaging phrases during API delays

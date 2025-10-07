@@ -37,6 +37,9 @@ import time
 from functools import partial
 from typing import Optional
 
+# Import filler player for engaging audio during API delays
+from filler_player import create_filler_player
+
 # Load environment
 import dotenv
 dotenv.load_dotenv()
@@ -63,6 +66,9 @@ WAIT_INTERVAL = int(os.getenv("WAIT_INTERVAL", "3"))
 # Skeleton Configuration
 SKELETON_MOVEMENT_ENABLED = os.getenv("SKELETON_MOVEMENT_ENABLED", "true").lower() == "true"
 SKELETON_MOVEMENT_COOLDOWN = int(os.getenv("SKELETON_MOVEMENT_COOLDOWN", "10"))
+
+# Filler Configuration
+FILLER_ENABLED = os.getenv("FILLER_ENABLED", "true").lower() == "true"
 
 def validate_environment():
     """Validate all required environment variables and configuration."""
@@ -329,7 +335,7 @@ class StreamingAudioPlayer:
         self.audio_queue.join()
         print("🎵 All audio chunks completed")
 
-async def send_streaming_request(chat_request, start_time=None):
+async def send_streaming_request(chat_request, start_time=None, sink_name_override=None):
     """Send a chat request to the streaming API and handle chunked audio response."""
     # Handle both base URL and full endpoint URL formats
     if API_URL.endswith("/api/chat"):
@@ -348,11 +354,18 @@ async def send_streaming_request(chat_request, start_time=None):
     # Determine sink name for audio routing
     # If skeleton setup ran, it should have set the default sink correctly
     # Otherwise fall back to BLUETOOTH_SPEAKER env variable
-    sink_name = None
-    if BLUETOOTH_SPEAKER:
+    sink_name = sink_name_override
+    if not sink_name and BLUETOOTH_SPEAKER:
         # Convert MAC address to PulseAudio sink name format
         sink_name = f"bluez_output.{BLUETOOTH_SPEAKER.replace(':', '_')}.1"
         print(f"🔊 Audio routing to: {sink_name}")
+    
+    # Initialize filler player for engaging audio during API delays
+    filler_player = None
+    if FILLER_ENABLED:
+        filler_player = create_filler_player(AUDIO_PLAYER, sink_name)
+        if filler_player:
+            print("🎭 Filler player ready for engaging delays")
     
     audio_player = StreamingAudioPlayer(sink_name=sink_name)
     total_chunks = 0
@@ -364,6 +377,11 @@ async def send_streaming_request(chat_request, start_time=None):
         async with httpx.AsyncClient() as client:
             print("🔗 Establishing streaming connection...")
             
+            # Start filler playback while waiting for API response
+            if filler_player and FILLER_ENABLED:
+                print("🎭 Starting filler phrase during API processing...")
+                filler_player.start_filler()
+            
             async with client.stream('POST', streaming_url, 
                                      json=chat_request, 
                                      timeout=TIMEOUT) as response:
@@ -373,6 +391,9 @@ async def send_streaming_request(chat_request, start_time=None):
                 print(f"🏷️  Content-Type: {response.headers.get('content-type', 'unknown')}")
                 
                 if response.status_code != 200:
+                    # Stop filler on error
+                    if filler_player:
+                        filler_player.stop_filler()
                     error_text = await response.aread()
                     print(f"❌ Stream error: {error_text.decode()}")
                     return None
@@ -401,6 +422,12 @@ async def send_streaming_request(chat_request, start_time=None):
                                 
                                 if first_chunk_time is None:
                                     first_chunk_time = time.time()
+                                    
+                                    # Stop filler when we receive first audio chunk
+                                    if filler_player:
+                                        print("🛑 Stopping filler - Mr. Bones response ready!")
+                                        filler_player.stop_filler()
+                                    
                                     if start_time:
                                         time_to_first_audio = first_chunk_time - start_time
                                         print(f"⚡ FIRST AUDIO READY in {time_to_first_audio:.2f}s!")
@@ -436,14 +463,20 @@ async def send_streaming_request(chat_request, start_time=None):
                 
     except httpx.TimeoutException:
         print(f"⏱️ Request timed out after {TIMEOUT} seconds")
+        if filler_player:
+            filler_player.stop_filler()
         audio_player.stop_playback()
         return None
     except httpx.ConnectError as e:
         print(f"🔌 Connection failed: {e}")
+        if filler_player:
+            filler_player.stop_filler()
         audio_player.stop_playback()
         return None
     except Exception as e:
         print(f"💥 Unexpected error: {e}")
+        if filler_player:
+            filler_player.stop_filler()
         audio_player.stop_playback()
         return None
 

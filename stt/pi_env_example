@@ -31,3 +31,6 @@ SKELETON_AUDIO_PIN=1234
 # Movement Settings
 SKELETON_MOVEMENT_ENABLED=true
 SKELETON_MOVEMENT_COOLDOWN=10  # Seconds between movements
+
+# === FILLER PHRASES CONFIGURATION ===
+FILLER_ENABLED=true  # Play engaging phrases during API delays
