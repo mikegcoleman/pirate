@@ -35,3 +35,7 @@ SKELETON_MOVEMENT_COOLDOWN=10  # Seconds between movements
 # === FILLER PHRASES CONFIGURATION ===
 FILLER_ENABLED=true  # Play engaging phrases during API delays
 POST_FILLER_DELAY=0.5  # Natural pause in seconds after filler stops
+
+# === AMBIENT AUDIO CONFIGURATION ===
+AMBIENT_ENABLED=true  # Continuous background ambience
+AMBIENT_VOLUME=0.3  # Background volume (0.0 to 1.0, low enough to not interfere)

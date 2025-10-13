@@ -40,6 +40,9 @@ from typing import Optional
 # Import filler player for engaging audio during API delays
 from filler_player import create_filler_player
 
+# Import ambient player for continuous background audio
+from ambient_player import create_ambient_player
+
 # Load environment
 import dotenv
 dotenv.load_dotenv()
@@ -70,6 +73,10 @@ SKELETON_MOVEMENT_COOLDOWN = int(os.getenv("SKELETON_MOVEMENT_COOLDOWN", "10"))
 # Filler Configuration
 FILLER_ENABLED = os.getenv("FILLER_ENABLED", "true").lower() == "true"
 POST_FILLER_DELAY = float(os.getenv("POST_FILLER_DELAY", "0.5"))  # Delay in seconds after filler stops
+
+# Ambient Audio Configuration
+AMBIENT_ENABLED = os.getenv("AMBIENT_ENABLED", "true").lower() == "true"
+AMBIENT_VOLUME = float(os.getenv("AMBIENT_VOLUME", "0.3"))  # Background volume (0.0 to 1.0)
 
 def validate_environment():
     """Validate all required environment variables and configuration."""
@@ -123,6 +130,13 @@ def validate_environment():
             errors.append("POST_FILLER_DELAY must be non-negative")
     except ValueError:
         errors.append("POST_FILLER_DELAY must be a valid number (seconds)")
+
+    try:
+        ambient_volume = float(os.getenv("AMBIENT_VOLUME", "0.3"))
+        if not (0.0 <= ambient_volume <= 1.0):
+            errors.append("AMBIENT_VOLUME must be between 0.0 and 1.0")
+    except ValueError:
+        errors.append("AMBIENT_VOLUME must be a valid number (0.0 to 1.0)")
 
     # Validate audio player
     audio_player = os.getenv("AUDIO_PLAYER", "paplay")
@@ -227,6 +241,7 @@ async def play_conversation_conclusion(reason: str, system_prompt: str) -> None:
             chat_request,
             start_time=time.time(),
             sink_name_override=resolve_sink_name(),
+            disable_filler=True
         )
     except Exception as exc:
         print(f"⚠️ Failed to play conversation conclusion ({reason}): {exc}")
@@ -352,7 +367,7 @@ class StreamingAudioPlayer:
         self.audio_queue.join()
         print("🎵 All audio chunks completed")
 
-async def send_streaming_request(chat_request, start_time=None, sink_name_override=None):
+async def send_streaming_request(chat_request, start_time=None, sink_name_override=None, disable_filler=False):
     """Send a chat request to the streaming API and handle chunked audio response."""
     # Handle both base URL and full endpoint URL formats
     if API_URL.endswith("/api/chat"):
@@ -379,7 +394,7 @@ async def send_streaming_request(chat_request, start_time=None, sink_name_overri
     
     # Initialize filler player for engaging audio during API delays
     filler_player = None
-    if FILLER_ENABLED:
+    if FILLER_ENABLED and not disable_filler:
         filler_player = create_filler_player(AUDIO_PLAYER, sink_name)
         if filler_player:
             print("🎭 Filler player ready for engaging delays")
@@ -587,6 +602,16 @@ async def main():
     print("🏴‍☠️ Mr. Bones Streaming Voice Assistant Starting...")
     print("=" * 50)
     
+    # Initialize ambient audio player for continuous background audio
+    ambient_player = None
+    if AMBIENT_ENABLED:
+        ambient_player = create_ambient_player(AUDIO_PLAYER, resolve_sink_name(), AMBIENT_VOLUME)
+        if ambient_player:
+            ambient_player.start_ambient()
+            print(f"🌊 Ambient audio started at {AMBIENT_VOLUME*100:.0f}% volume")
+        else:
+            print("⚠️ Failed to initialize ambient audio - continuing without background sound")
+    
     # Set up skeleton connections (assume services are already running)
     skeleton_controller = None
     if SKELETON_AVAILABLE and SKELETON_MOVEMENT_ENABLED:
@@ -760,6 +785,11 @@ async def main():
     except Exception as e:
         print(f"💥 Unexpected error: {e}")
     finally:
+        # Stop ambient audio
+        if ambient_player:
+            ambient_player.stop_ambient()
+            print("🌊 Ambient audio stopped")
+        
         # Note: Don't disconnect skeleton BLE service - it should stay running
         # for future client.py sessions and movement control
         if SKELETON_AVAILABLE:

@@ -65,6 +65,14 @@ pirate/
 - Respects audio routing configuration
 - **Status**: ✅ Implemented
 
+### 8. Ambient Audio System (New Feature)
+- Continuous looping background ambience audio
+- Low volume (30% default) to avoid interfering with speech
+- Plays continuously during filler phrases and API responses
+- Thread-safe with graceful startup/shutdown
+- Configurable volume and enable/disable options
+- **Status**: ✅ Implemented
+
 ### 6. Environment Variable Validation
 - Comprehensive startup validation
 - Range checking for numeric values
@@ -130,9 +138,25 @@ BLOCKSIZE=8000          # 4000 for Pi, 8000 for Mac/Windows
 FILLER_ENABLED=true     # Enable engaging filler phrases during API delays
 ```
 
+### Ambient Audio Configuration
+```bash
+AMBIENT_ENABLED=true    # Enable continuous background ambience
+AMBIENT_VOLUME=0.3      # Background volume (0.0 to 1.0, low to not interfere)
+```
+
 ## Recent Changes
 
-### Filler Phrase System Implementation (Current Session)
+### Ambient Audio System Implementation (Current Session)
+- ✅ Created continuous ambient audio system with looping background audio
+- ✅ Integrated ambient player into main client.py for continuous operation
+- ✅ Added low volume (30% default) to avoid interfering with speech
+- ✅ Thread-safe playback with graceful startup and shutdown
+- ✅ Respects existing audio routing (Bluetooth speaker, skeleton audio)
+- ✅ Added AMBIENT_ENABLED and AMBIENT_VOLUME environment variables for control
+- ✅ Full testing suite to verify functionality and speech overlap scenarios
+- 🌊 **Impact**: Mr. Bones now has immersive background atmosphere throughout interactions
+
+### Filler Phrase System Implementation (Previous Session)
 - ✅ Created comprehensive filler playback system with 25 pre-recorded phrases
 - ✅ Integrated filler player into main client.py to play during API delays
 - ✅ Added thread-safe playback with interrupt capability when response arrives
@@ -241,19 +265,9 @@ Mr. Bones is a friendly pirate who:
 ## Next Steps
 
 ### High Priority:
-1. Implement conversation timer (2-3 minute limit)
-2. Test on Windows environment
-3. Deploy to Raspberry Pi
-
-### Medium Priority:
-1. Add response streaming for faster perceived performance
-2. Implement conversation history management
-3. Add reset conversation command
-
-### Low Priority:
-1. Add visual/audio cues for approaching time limit
-2. Implement confidence-based retry logic
-3. Add conversation analytics
+1. ✅ ~~Prewarm bluetooth speaker w/ underlying ambient sounds~~ (Ambient audio system implemented)
+2. Add movement
+3. Add conversation timer
 
 ## GitHub Issues
 - #1: Implement conversation timer with graceful exit
