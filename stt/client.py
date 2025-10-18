@@ -719,6 +719,8 @@ async def main():
                     await conclude_and_reset("silence")
                 else:
                     print("⌛ Still waiting for a matey to speak up...")
+                    # Reset conversation timer so new visitors get full conversation
+                    reset_conversation()
                 continue
 
             if reason == "cancelled":
