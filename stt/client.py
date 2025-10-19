@@ -253,6 +253,44 @@ def resolve_sink_name() -> Optional[str]:
         return f"bluez_output.{BLUETOOTH_SPEAKER.replace(':', '_')}.1"
     return None
 
+def setup_microphone():
+    """Configure microphone volume and sensitivity settings."""
+    mic_device = os.getenv("MIC_DEVICE", "")
+    mic_volume = os.getenv("MIC_VOLUME", "150%")
+    
+    if not mic_device:
+        print("🎤 No specific microphone configured, using system default")
+        return True
+    
+    print(f"🎤 Setting up microphone: {mic_device}")
+    print(f"🔊 Setting volume to: {mic_volume}")
+    
+    try:
+        # Set microphone volume for better pickup at distance
+        result = subprocess.run([
+            "pactl", "set-source-volume", mic_device, mic_volume
+        ], capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            print(f"⚠️ Could not set microphone volume: {result.stderr}")
+            return False
+        
+        # Set as default input source
+        result = subprocess.run([
+            "pactl", "set-default-source", mic_device
+        ], capture_output=True, text=True)
+        
+        if result.returncode == 0:
+            print(f"✅ Microphone configured for improved distance pickup")
+        else:
+            print(f"⚠️ Could not set as default microphone: {result.stderr}")
+        
+        return True
+        
+    except Exception as e:
+        print(f"⚠️ Error setting up microphone: {e}")
+        return False
+
 def connect_bluetooth_speaker():
     """Connect to Bluetooth speaker if configured."""
     if not BLUETOOTH_SPEAKER:
@@ -601,6 +639,9 @@ async def main():
     """Main conversation loop with streaming audio."""
     print("🏴‍☠️ Mr. Bones Streaming Voice Assistant Starting...")
     print("=" * 50)
+    
+    # Set up microphone for better distance pickup
+    setup_microphone()
     
     # Initialize ambient audio player for continuous background audio
     ambient_player = None
