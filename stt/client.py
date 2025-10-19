@@ -37,6 +37,16 @@ import time
 from functools import partial
 from typing import Optional
 
+# Import structured logging utilities
+from logger_utils import (
+    get_logger,
+    generate_request_id,
+    set_request_id,
+    get_request_id,
+    clear_request_id,
+    add_request_id_header
+)
+
 # Import filler player for engaging audio during API delays
 from filler_player import create_filler_player
 
@@ -47,13 +57,16 @@ from ambient_player import create_ambient_player
 import dotenv
 dotenv.load_dotenv()
 
+# Initialize structured logger
+logger = get_logger("mr-bones-client")
+
 # Import skeleton controllers
 try:
     from skeleton_movement import get_skeleton_controller, disconnect_skeleton
     from skeleton_setup import setup_skeleton_for_client, disconnect_skeleton_connections
     SKELETON_AVAILABLE = True
 except ImportError as e:
-    print(f"⚠️ Skeleton integration disabled: {e}")
+    logger.warn("Skeleton integration disabled", error=str(e))
     SKELETON_AVAILABLE = False
 
 # Audio Configuration
@@ -81,30 +94,30 @@ AMBIENT_VOLUME = float(os.getenv("AMBIENT_VOLUME", "0.3"))  # Background volume 
 def validate_environment():
     """Validate all required environment variables and configuration."""
     errors = []
-    print("⬜ Environment validation starting")
-    
+    logger.info("Environment validation starting")
+
     # Required variables
     required_vars = {
         "API_URL": "URL of your LLM API backend",
         "LLM_MODEL": "LLM model to use (e.g., llama3.1:8b-instruct-q4_K_M)"
     }
-    
+
     for var, description in required_vars.items():
         value = os.getenv(var)
         if not value:
             errors.append(f"Missing {var}: {description}")
-    
+
     # Validate API_URL format
     api_url = os.getenv("API_URL")
     if api_url and not (api_url.startswith("http://") or api_url.startswith("https://")):
         errors.append("API_URL must start with http:// or https://")
-    
-    # Validate numeric settings  
+
+    # Validate numeric settings
     try:
         int(os.getenv("TIMEOUT", "90"))
     except ValueError:
         errors.append("TIMEOUT must be a valid integer (seconds)")
-    
+
     try:
         int(os.getenv("WAIT_INTERVAL", "3"))
     except ValueError:
@@ -144,15 +157,15 @@ def validate_environment():
         subprocess.run([audio_player, "--help"], capture_output=True, check=False)
     except FileNotFoundError:
         errors.append(f"Audio player not found: {audio_player}")
-    
+
     if errors:
-        print("❌ Environment validation failed:")
+        logger.error("Environment validation failed", error_count=len(errors))
         for error in errors:
             print(f"  • {error}")
         print("\n💡 Please check your .env file and system configuration")
         sys.exit(1)
     else:
-        print("✅ Environment validation passed")
+        logger.info("Environment validation passed")
 
 # Validate environment on startup
 validate_environment()
@@ -407,6 +420,9 @@ class StreamingAudioPlayer:
 
 async def send_streaming_request(chat_request, start_time=None, sink_name_override=None, disable_filler=False):
     """Send a chat request to the streaming API and handle chunked audio response."""
+    # Get reqId from context (should be set at conversation turn start)
+    req_id = get_request_id()
+
     # Handle both base URL and full endpoint URL formats
     if API_URL.endswith("/api/chat"):
         streaming_url = API_URL.replace("/api/chat", "/api/chat/stream")
@@ -414,12 +430,12 @@ async def send_streaming_request(chat_request, start_time=None, sink_name_overri
         streaming_url = API_URL + "api/chat/stream"
     else:
         streaming_url = API_URL + "/api/chat/stream"
-    
-    print(f"\n🌐 === STREAMING API REQUEST ===")
-    print(f"📡 Endpoint: {streaming_url}")
-    print(f"🤖 Model: {chat_request.get('model', 'unknown')}")
-    print(f"💬 Messages: {len(chat_request.get('messages', []))}")
-    print(f"⏱️  Timeout: {TIMEOUT}s")
+
+    logger.info("Streaming API request starting",
+                endpoint=streaming_url,
+                model=chat_request.get('model', 'unknown'),
+                message_count=len(chat_request.get('messages', [])),
+                timeout=TIMEOUT)
     
     # Determine sink name for audio routing
     # If skeleton setup ran, it should have set the default sink correctly
@@ -444,16 +460,21 @@ async def send_streaming_request(chat_request, start_time=None, sink_name_overri
     first_chunk_time = None
     
     try:
+        # Prepare headers with request ID
+        headers = {}
+        add_request_id_header(headers, req_id)
+
         async with httpx.AsyncClient() as client:
-            print("🔗 Establishing streaming connection...")
-            
+            logger.debug("Establishing streaming connection", headers=headers)
+
             # Start filler playback while waiting for API response
             if filler_player and FILLER_ENABLED:
-                print("🎭 Starting filler phrase during API processing...")
+                logger.debug("Starting filler phrase during API processing")
                 filler_player.start_filler()
-            
-            async with client.stream('POST', streaming_url, 
-                                     json=chat_request, 
+
+            async with client.stream('POST', streaming_url,
+                                     json=chat_request,
+                                     headers=headers,
                                      timeout=TIMEOUT) as response:
                 
                 print(f"\n🌐 === STREAMING RESPONSE ===")
@@ -776,14 +797,16 @@ async def main():
                 print("❌ No speech detected, trying again...")
                 continue
 
-            print(f"🗣️ User said: '{user_text}'")
-            if confidence is not None:
-                print(f"   Confidence: {confidence:.2f}")
+            # Generate and set request ID for this conversation turn
+            req_id = generate_request_id()
+            set_request_id(req_id)
+
+            logger.info("User speech transcribed", user_text=user_text, confidence=confidence)
 
             if conversation_start is None:
                 conversation_start = time.time()
                 conversation_deadline = conversation_start + CONVERSATION_LENGTH
-                print(f"⏳ Conversation timer started ({CONVERSATION_LENGTH}s limit)")
+                logger.info("Conversation timer started", limit_seconds=CONVERSATION_LENGTH)
 
             start_time = time.time()
 

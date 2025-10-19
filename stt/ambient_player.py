@@ -13,6 +13,10 @@ import threading
 import time
 import tempfile
 from typing import Optional
+from logger_utils import get_logger, generate_operation_id
+
+# Initialize logger
+logger = get_logger("ambient-player")
 
 
 class AmbientPlayer:
@@ -40,35 +44,43 @@ class AmbientPlayer:
         # Validate audio file exists
         if not os.path.exists(audio_file_path):
             raise FileNotFoundError(f"Ambient audio file not found: {audio_file_path}")
-        
-        print(f"🌊 Ambient player initialized: {os.path.basename(audio_file_path)} @ {volume*100:.0f}% volume")
+
+        # Generate operation ID for background ambient playback
+        self.op_id = generate_operation_id()
+
+        logger.info("Ambient player initialized",
+                    file=os.path.basename(audio_file_path),
+                    volume_percent=int(volume*100),
+                    opId=self.op_id)
     
     def start_ambient(self):
         """Start continuous ambient audio playback."""
         if self.is_playing:
-            print("⚠️ Ambient audio already playing")
+            logger.warn("Ambient audio already playing", opId=self.op_id)
             return
-        
+
         self.is_playing = True
         self.stop_event.clear()
         self.play_thread = threading.Thread(target=self._ambient_loop, daemon=True)
         self.play_thread.start()
-        print(f"🌊 Started ambient audio: {os.path.basename(self.audio_file_path)}")
+        logger.info("Started ambient audio",
+                    file=os.path.basename(self.audio_file_path),
+                    opId=self.op_id)
     
     def stop_ambient(self):
         """Stop ambient audio playback."""
         if not self.is_playing:
             return
-        
+
         self.stop_event.set()
         if self.play_thread:
             self.play_thread.join(timeout=3)
         self.is_playing = False
-        print("🌊 Stopped ambient audio")
+        logger.info("Stopped ambient audio", opId=self.op_id)
     
     def _ambient_loop(self):
         """Worker thread that continuously loops the ambient audio."""
-        print(f"🌊 Ambient loop started (volume: {self.volume*100:.0f}%)")
+        logger.debug("Ambient loop started", volume_percent=int(self.volume*100), opId=self.op_id)
         
         while not self.stop_event.is_set():
             try:

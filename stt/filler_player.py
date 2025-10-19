@@ -20,6 +20,10 @@ import tempfile
 import time
 from typing import Optional, List
 from pathlib import Path
+from logger_utils import get_logger, get_request_id
+
+# Initialize logger
+logger = get_logger("filler-player")
 
 class FillerPlayer:
     """Manages playback of filler phrases during API response delays."""
@@ -44,8 +48,8 @@ class FillerPlayer:
         
         if not self.filler_files:
             raise ValueError(f"No filler audio files found in {filler_dir}")
-        
-        print(f"🎵 FillerPlayer initialized with {len(self.filler_files)} filler phrases")
+
+        logger.info("FillerPlayer initialized", filler_count=len(self.filler_files))
     
     def _discover_filler_files(self) -> List[Path]:
         """Discover all filler audio files in the directory."""

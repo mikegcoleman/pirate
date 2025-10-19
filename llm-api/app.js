@@ -9,15 +9,73 @@ require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 8080;
 
+// Environment configuration for logging
+const LOG_LEVEL = (process.env.LOG_LEVEL || 'info').toLowerCase();
+const LOG_STACK = process.env.LOG_STACK === '1';
+const REQUEST_ID_HEADER = process.env.REQUEST_ID_HEADER || 'X-Request-Id';
+
+// Log levels
+const LOG_LEVELS = { debug: 0, info: 1, warn: 2, error: 3 };
+const CURRENT_LOG_LEVEL = LOG_LEVELS[LOG_LEVEL] || LOG_LEVELS.info;
+
+// Structured JSON logging function
+function log(level, msg, reqId = null, meta = {}) {
+    const levelNum = LOG_LEVELS[level] || LOG_LEVELS.info;
+    if (levelNum < CURRENT_LOG_LEVEL) return;
+
+    const logEntry = {
+        ts: new Date().toISOString(),
+        level,
+        reqId: reqId || null,
+        msg,
+        meta: Object.keys(meta).length > 0 ? meta : undefined
+    };
+
+    // Add stack trace for errors if LOG_STACK=1
+    if (level === 'error' && LOG_STACK) {
+        logEntry.meta = logEntry.meta || {};
+        logEntry.meta.stack = new Error().stack;
+    }
+
+    // Output JSON line (remove undefined fields)
+    console.log(JSON.stringify(logEntry, (key, value) => value === undefined ? undefined : value));
+}
+
 // Middleware
 app.use(express.json());
+
+// Request ID middleware - must come before CORS
+app.use((req, res, next) => {
+    // Check for incoming X-Request-Id header (case-insensitive)
+    let reqId = null;
+    for (const [key, value] of Object.entries(req.headers)) {
+        if (key.toLowerCase() === REQUEST_ID_HEADER.toLowerCase()) {
+            reqId = value;
+            break;
+        }
+    }
+
+    // Generate new reqId if not present
+    if (!reqId) {
+        reqId = uuidv4().substring(0, 8);
+    }
+
+    // Attach to request object
+    req.reqId = reqId;
+
+    // Echo in response header
+    res.setHeader(REQUEST_ID_HEADER, reqId);
+
+    next();
+});
 
 // Enable CORS if configured
 if (process.env.ENABLE_CORS === 'true') {
     app.use((req, res, next) => {
         res.header('Access-Control-Allow-Origin', '*');
         res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-        res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+        res.header('Access-Control-Allow-Headers', `Content-Type, Authorization, ${REQUEST_ID_HEADER}`);
+        res.header('Access-Control-Expose-Headers', REQUEST_ID_HEADER);
         if (req.method === 'OPTIONS') {
             res.sendStatus(200);
         } else {
@@ -44,7 +102,7 @@ class ElevenLabsTTSProvider {
             apiKey: this.apiKey
         });
         
-        console.log(`✅ ElevenLabs TTS: Initialized with voice ID ${this.voiceId}`);
+        log('info', 'ElevenLabs TTS initialized', null, { voice_id: this.voiceId });
     }
     
     async generateAudio(text) {
@@ -76,12 +134,6 @@ class ElevenLabsTTSProvider {
 let ttsProvider;
 
 // Utility functions
-function log(requestId, level, message) {
-    const timestamp = new Date().toISOString();
-    const logLevel = level.toUpperCase();
-    console.log(`${timestamp} - ${logLevel} - [${requestId}] ${message}`);
-}
-
 function getLlmEndpoint() {
     const baseUrl = process.env.LLM_BASE_URL || 'http://model-runner.docker.internal/engines/v1';
     return `${baseUrl}/chat/completions`;
@@ -110,119 +162,125 @@ function splitIntoSentences(text) {
     return result.length > 0 ? result : [text.trim()];
 }
 
-function applyFormatPostProcessing(content, requestId) {
+function applyFormatPostProcessing(content, reqId) {
     const originalContent = content;
-    
+
     // Fix UTF-8 encoding issues
     content = Buffer.from(content, 'utf8').toString('utf8');
-    
+
     // Apply contraction replacements
     Object.entries(contractionsMap).forEach(([contraction, expansion]) => {
         const regex = new RegExp(`\\b${contraction.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'g');
         content = content.replace(regex, expansion);
     });
-    
+
     // Replace Mr. with Mister
     content = content.replace(/\bMr\./g, 'Mister');
     content = content.replace(/\bmr\./g, 'mister');
-    
+
     // Fix UTF-8 issues
     Object.entries(utf8FixesMap).forEach(([broken, fixed]) => {
         content = content.replace(new RegExp(broken, 'g'), fixed);
     });
-    
+
     // Log if any changes were made
     if (content !== originalContent) {
-        log(requestId, 'info', '🔧 Applied format post-processing');
+        log('info', 'Applied format post-processing', reqId);
     }
-    
+
     return content;
 }
 
-async function callLlmApi(chatRequest, requestId) {
+async function callLlmApi(chatRequest, reqId) {
     const headers = { 'Content-Type': 'application/json' };
-    
+
     // Add OpenAI API key if available (for OpenAI endpoints)
     if (process.env.OPENAI_API_KEY) {
         headers['Authorization'] = `Bearer ${process.env.OPENAI_API_KEY}`;
     }
-    
+
     // Validate LLM endpoint
     const llmEndpoint = getLlmEndpoint();
     if (!llmEndpoint) {
-        log(requestId, 'error', '❌ LLM_BASE_URL environment variable is not set');
+        log('error', 'LLM_BASE_URL environment variable is not set', reqId);
         throw new Error('LLM_BASE_URL environment variable is not set');
     }
-    
+
     const model = chatRequest.model || 'unknown';
-    log(requestId, 'info', `🌐 Calling LLM endpoint: ${llmEndpoint}`);
-    log(requestId, 'info', `🤖 Using model: ${model}`);
-    
+    log('info', 'Calling LLM endpoint', reqId, { endpoint: llmEndpoint, model });
+
     const optimizedRequest = { ...chatRequest };
-    
+
     // Send request to LLM API
-    log(requestId, 'info', '📡 Sending request to LLM...');
+    log('debug', 'Sending request to LLM', reqId);
     
     try {
         const response = await axios.post(llmEndpoint, optimizedRequest, {
             headers,
             timeout: 30000
         });
-        
-        log(requestId, 'info', '✅ LLM API responded with status 200');
-        log(requestId, 'info', '📋 LLM response parsed successfully');
-        
+
+        log('info', 'LLM API responded successfully', reqId, { status: response.status });
+
         // Extract the assistant's message
         const chatResponse = response.data;
-        
+
         if (!chatResponse.choices || chatResponse.choices.length === 0) {
             throw new Error('No choices in LLM API response');
         }
-        
+
         const choice = chatResponse.choices[0];
         if (!choice.message || !choice.message.content) {
             throw new Error('No content in LLM API response');
         }
-        
+
         const content = choice.message.content.trim();
         if (!content) {
             throw new Error('Empty content in LLM API response');
         }
-        
+
         // Apply format post-processing
-        const processedContent = applyFormatPostProcessing(content, requestId);
+        const processedContent = applyFormatPostProcessing(content, reqId);
         return processedContent;
-        
+
     } catch (error) {
         if (error.code === 'ECONNABORTED') {
-            log(requestId, 'error', '⏰ LLM API timeout');
+            log('error', 'LLM API timeout', reqId, { timeout_ms: 30000 });
             throw new Error('LLM API request timed out');
         } else if (error.code === 'ECONNREFUSED') {
-            log(requestId, 'error', '🔌 LLM API connection error');
+            log('error', 'LLM API connection error', reqId);
             throw new Error('Cannot connect to LLM API');
         } else if (error.response) {
-            log(requestId, 'error', `🚫 LLM API returned status ${error.response.status}: ${error.response.data}`);
+            log('error', 'LLM API returned error', reqId, {
+                status: error.response.status,
+                data: error.response.data
+            });
             throw new Error(`API returned status code ${error.response.status}: ${error.response.data}`);
         } else {
-            log(requestId, 'error', `❌ LLM API error: ${error.message}`);
+            log('error', 'LLM API error', reqId, { error: error.message }, exc_info=true);
             throw error;
         }
     }
 }
 
-async function generateSentenceAudio(sentence, requestId) {
+async function generateSentenceAudio(sentence, reqId) {
     const startTime = Date.now();
-    log(requestId, 'info', `🎵 Starting TTS for sentence: ${sentence.substring(0, 50)}...`);
-    log(requestId, 'info', `🎵 Speech rate: ${process.env.SPEECH_RATE}`);
-    
+    log('debug', 'Starting TTS for sentence', reqId, {
+        sentence_preview: sentence.substring(0, 50),
+        speech_rate: process.env.SPEECH_RATE
+    });
+
     try {
         const audioBase64 = await ttsProvider.generateAudio(sentence);
-        const generationTime = (Date.now() - startTime) / 1000;
-        log(requestId, 'info', `✅ TTS generation completed in ${generationTime.toFixed(3)}s for sentence: ${sentence.substring(0, 50)}...`);
+        const duration_ms = Date.now() - startTime;
+        log('info', 'TTS generation completed', reqId, {
+            duration_ms,
+            sentence_preview: sentence.substring(0, 50)
+        });
         return audioBase64;
     } catch (error) {
-        const generationTime = (Date.now() - startTime) / 1000;
-        log(requestId, 'error', `❌ TTS generation failed after ${generationTime.toFixed(3)}s: ${error.message}`);
+        const duration_ms = Date.now() - startTime;
+        log('error', 'TTS generation failed', reqId, { duration_ms, error: error.message }, true);
         throw error;
     }
 }
@@ -248,29 +306,32 @@ app.get('/health', (req, res) => {
 });
 
 app.post('/api/chat/stream', async (req, res) => {
-    const requestId = uuidv4().substring(0, 8);
-    log(requestId, 'info', `📥 Received streaming chat request from ${req.ip}`);
-    
+    const reqId = req.reqId; // From middleware
+    log('info', 'Received streaming chat request', reqId, { ip: req.ip });
+
     try {
         // Validate request
         if (!req.body) {
-            log(requestId, 'error', '❌ No data received in request body');
+            log('error', 'No data received in request body', reqId);
             return res.status(400).json({ error: 'No data received' });
         }
-        
+
         const chatRequest = req.body;
-        
+
         // Validate required fields
         if (!chatRequest.model) {
-            log(requestId, 'error', '❌ Missing required field: model');
+            log('error', 'Missing required field: model', reqId);
             return res.status(400).json({ error: 'Missing required field: model' });
         }
         if (!chatRequest.messages) {
-            log(requestId, 'error', '❌ Missing required field: messages');
+            log('error', 'Missing required field: messages', reqId);
             return res.status(400).json({ error: 'Missing required field: messages' });
         }
-        
-        log(requestId, 'info', `📋 Streaming request payload: ${JSON.stringify(chatRequest, null, 2)}`);
+
+        log('debug', 'Streaming request validated', reqId, {
+            model: chatRequest.model,
+            message_count: chatRequest.messages.length
+        });
         
         // Set up Server-Sent Events
         res.writeHead(200, {
@@ -281,38 +342,43 @@ app.post('/api/chat/stream', async (req, res) => {
         
         try {
             // Call the LLM API first (we need complete text for ElevenLabs)
-            log(requestId, 'info', '🚀 Calling LLM API...');
-            const responseText = await callLlmApi(chatRequest, requestId);
-            
+            log('info', 'Calling LLM API', reqId);
+            const responseText = await callLlmApi(chatRequest, reqId);
+
             if (!responseText || !responseText.trim()) {
-                log(requestId, 'error', '❌ Empty response from LLM');
+                log('error', 'Empty response from LLM', reqId);
                 res.write(`data: ${JSON.stringify({ type: 'error', message: 'Empty response from LLM' })}\n\n`);
                 res.end();
                 return;
             }
-            
-            log(requestId, 'info', `✅ Received LLM response: ${responseText.substring(0, 100)}...`);
-            
+
+            log('info', 'Received LLM response', reqId, {
+                response_preview: responseText.substring(0, 100)
+            });
+
             // Split response into sentences for chunked audio generation
             const sentences = splitIntoSentences(responseText);
             const totalChunks = sentences.length;
-            
-            log(requestId, 'info', `📊 Split response into ${totalChunks} sentences`);
-            
+
+            log('info', 'Split response into sentences', reqId, { total_chunks: totalChunks });
+
             // Send metadata first
-            res.write(`data: ${JSON.stringify({ 
-                type: 'metadata', 
-                total_chunks: totalChunks, 
-                text: responseText 
+            res.write(`data: ${JSON.stringify({
+                type: 'metadata',
+                total_chunks: totalChunks,
+                text: responseText
             })}\n\n`);
-            
+
             // Generate TTS for each sentence and stream
             for (let chunkId = 1; chunkId <= sentences.length; chunkId++) {
                 const sentence = sentences[chunkId - 1];
                 try {
-                    log(requestId, 'info', `🎵 Generating TTS for chunk ${chunkId}/${totalChunks}: '${sentence.substring(0, 30)}...'`);
-                    const audioBase64 = await generateSentenceAudio(sentence, `${requestId}-${chunkId}`);
-                    
+                    log('debug', 'Generating TTS for chunk', reqId, {
+                        chunk: `${chunkId}/${totalChunks}`,
+                        sentence_preview: sentence.substring(0, 30)
+                    });
+                    const audioBase64 = await generateSentenceAudio(sentence, reqId);
+
                     // Send audio chunk
                     const chunkData = {
                         type: 'audio_chunk',
@@ -321,10 +387,13 @@ app.post('/api/chat/stream', async (req, res) => {
                         audio_base64: audioBase64
                     };
                     res.write(`data: ${JSON.stringify(chunkData)}\n\n`);
-                    log(requestId, 'info', `✅ Sent chunk ${chunkId}/${totalChunks}`);
-                    
+                    log('debug', 'Sent chunk', reqId, { chunk: `${chunkId}/${totalChunks}` });
+
                 } catch (error) {
-                    log(requestId, 'error', `❌ Failed to generate TTS for chunk ${chunkId}: ${error.message}`);
+                    log('error', 'Failed to generate TTS for chunk', reqId, {
+                        chunk_id: chunkId,
+                        error: error.message
+                    });
                     // Send error for this chunk but continue with others
                     const errorData = {
                         type: 'chunk_error',
@@ -335,20 +404,24 @@ app.post('/api/chat/stream', async (req, res) => {
                     res.write(`data: ${JSON.stringify(errorData)}\n\n`);
                 }
             }
-            
+
             // Send completion signal
             res.write(`data: ${JSON.stringify({ type: 'complete' })}\n\n`);
-            log(requestId, 'info', '✅ Streaming response completed successfully');
+            log('info', 'Streaming response completed successfully', reqId);
             res.end();
-            
+
         } catch (error) {
-            log(requestId, 'error', `💥 Error in streaming response generation: ${error.message}`);
+            log('error', 'Error in streaming response generation', reqId, {
+                error: error.message
+            }, true);
             res.write(`data: ${JSON.stringify({ type: 'error', message: error.message })}\n\n`);
             res.end();
         }
-        
+
     } catch (error) {
-        log(requestId, 'error', `💥 Unexpected error in chat_stream_api: ${error.message}`);
+        log('error', 'Unexpected error in chat_stream_api', reqId, {
+            error: error.message
+        }, true);
         return res.status(500).json({ error: 'Internal server error' });
     }
 });
