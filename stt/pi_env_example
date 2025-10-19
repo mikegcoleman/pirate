@@ -1,0 +1,41 @@
+# Raspberry Pi Environment Configuration for Mr. Bones Pirate Assistant
+# Copy this to .env and customize for your setup
+
+# === REQUIRED API CONFIGURATION ===
+API_URL=http://192.168.50.66:8080/api/chat
+LLM_MODEL=llama3.2:8b-instruct-q4_K_M
+
+# === RASPBERRY PI AUDIO CONFIGURATION ===
+SPEECH_RATE=150
+AUDIO_PLAYER=aplay
+BLUETOOTH_SPEAKER=24:F4:95:F4:CA:45  # Skeleton Classic BT audio MAC
+
+# === RASPBERRY PI PERFORMANCE SETTINGS ===
+TIMEOUT=60
+WAIT_INTERVAL=5
+
+# === STT CONFIGURATION ===
+VOSK_MODEL_PATH=models/vosk-model-small-en-us-0.15
+SAMPLE_RATE=16000
+MIC_DEVICE=default
+BLOCKSIZE=4000
+
+# === SKELETON INTEGRATION ===
+# BLE Control Interface
+SKELETON_BLE_ADDRESS=24:F4:95:CA:21:91
+
+# Classic Bluetooth Audio Interface  
+SKELETON_AUDIO_ADDRESS=24:F4:95:F4:CA:45
+SKELETON_AUDIO_PIN=1234
+
+# Movement Settings
+SKELETON_MOVEMENT_ENABLED=true
+SKELETON_MOVEMENT_COOLDOWN=10  # Seconds between movements
+
+# === FILLER PHRASES CONFIGURATION ===
+FILLER_ENABLED=true  # Play engaging phrases during API delays
+POST_FILLER_DELAY=0.5  # Natural pause in seconds after filler stops
+
+# === AMBIENT AUDIO CONFIGURATION ===
+AMBIENT_ENABLED=true  # Continuous background ambience
+AMBIENT_VOLUME=0.3  # Background volume (0.0 to 1.0, low enough to not interfere)

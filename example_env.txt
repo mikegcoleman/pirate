@@ -1,0 +1,26 @@
+# Platform Configuration (Optional)
+PLATFORM=linux
+
+# API Configuration - keeping existing endpoint
+API_URL=http://192.168.50.66:8080/api/chat
+LLM_MODEL=ai/llama3.1:latest
+
+# Audio Configuration - Pi optimized
+SPEECH_RATE=150
+AUDIO_PLAYER=aplay
+
+# Performance Settings - Pi optimized
+TIMEOUT=60
+WAIT_INTERVAL=5
+
+# STT Configuration - Pi optimized
+VOSK_MODEL_PATH=models/vosk-model-small-en-us-0.15
+SAMPLE_RATE=16000
+MIC_DEVICE=Antlion USB Microphone: Audio (hw:2,0)
+BLOCKSIZE=4000
+
+# Prompt Configuration
+PROMPT_FILE=prompt.txt
+
+# Filler Phrases Configuration
+FILLER_ENABLED=true  # Play engaging phrases during API delays
