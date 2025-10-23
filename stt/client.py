@@ -125,8 +125,8 @@ def validate_environment():
 
     try:
         conv_length = int(os.getenv("CONVERSATION_LENGTH", "180"))
-        if conv_length <= 0:
-            errors.append("CONVERSATION_LENGTH must be greater than zero")
+        if conv_length < 0:
+            errors.append("CONVERSATION_LENGTH must be non-negative (0 = no time limit)")
     except ValueError:
         errors.append("CONVERSATION_LENGTH must be a valid integer (seconds)")
 
@@ -173,7 +173,7 @@ validate_environment()
 # Environment variables (now guaranteed to be valid)
 API_URL = os.getenv("API_URL")
 LLM_MODEL = os.getenv("LLM_MODEL")
-CONVERSATION_LENGTH = max(1, int(os.getenv("CONVERSATION_LENGTH", "180")))
+CONVERSATION_LENGTH = int(os.getenv("CONVERSATION_LENGTH", "180"))  # 0 = no time limit
 MAX_SILENCE = max(1, int(os.getenv("MAX_SILENCE", "30")))
 
 CONVERSATION_CONCLUSION_PROMPTS = {
@@ -807,8 +807,12 @@ async def main():
 
             if conversation_start is None:
                 conversation_start = time.time()
-                conversation_deadline = conversation_start + CONVERSATION_LENGTH
-                logger.info("Conversation timer started", limit_seconds=CONVERSATION_LENGTH)
+                if CONVERSATION_LENGTH > 0:
+                    conversation_deadline = conversation_start + CONVERSATION_LENGTH
+                    logger.info("Conversation timer started", limit_seconds=CONVERSATION_LENGTH)
+                else:
+                    conversation_deadline = None
+                    logger.info("Conversation started with no time limit")
 
             start_time = time.time()
 
