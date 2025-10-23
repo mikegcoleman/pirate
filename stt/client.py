@@ -749,7 +749,9 @@ async def main():
             reset_conversation()
             return
         try:
-            await play_conversation_conclusion(reason, system_prompt)
+            # Only play conclusion for time limit, not for silence timeout
+            if reason == "time_limit":
+                await play_conversation_conclusion(reason, system_prompt)
         except Exception as exc:
             print(f"⚠️ Unable to play {reason} outro: {exc}")
         finally:
