@@ -2,13 +2,14 @@
 # Copy this to .env and customize for your setup
 
 # === REQUIRED API CONFIGURATION ===
-API_URL=http://192.168.50.66:8080/api/chat
+# Replace <YOUR_API_SERVER_IP> with the actual IP of your Windows/API server
+API_URL=http://<YOUR_API_SERVER_IP>:8080/api/chat
 LLM_MODEL=llama3.2:8b-instruct-q4_K_M
 
 # === RASPBERRY PI AUDIO CONFIGURATION ===
 SPEECH_RATE=150
 AUDIO_PLAYER=aplay
-BLUETOOTH_SPEAKER=24:F4:95:F4:CA:45  # Skeleton Classic BT audio MAC
+BLUETOOTH_SPEAKER=  # Skeleton Classic BT audio MAC (format: AA:BB:CC:DD:EE:FF)
 
 # === RASPBERRY PI PERFORMANCE SETTINGS ===
 TIMEOUT=60
@@ -21,12 +22,12 @@ MIC_DEVICE=default
 BLOCKSIZE=4000
 
 # === SKELETON INTEGRATION ===
-# BLE Control Interface
-SKELETON_BLE_ADDRESS=24:F4:95:CA:21:91
+# BLE Control Interface — set to your device's BLE MAC address
+SKELETON_BLE_ADDRESS=
 
-# Classic Bluetooth Audio Interface  
-SKELETON_AUDIO_ADDRESS=24:F4:95:F4:CA:45
-SKELETON_AUDIO_PIN=1234
+# Classic Bluetooth Audio Interface
+SKELETON_AUDIO_ADDRESS=
+SKELETON_AUDIO_PIN=  # Default for this device model is 1234 — verify with your hardware
 
 # Movement Settings
 SKELETON_MOVEMENT_ENABLED=true

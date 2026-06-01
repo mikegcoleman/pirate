@@ -6,6 +6,7 @@ Run this in one shell and keep it running.
 """
 
 import asyncio
+import os
 import signal
 import sys
 from typing import Optional
@@ -16,9 +17,9 @@ except ImportError:
     print("❌ Bleak not installed. Install with: pip install bleak>=1.1.0")
     exit(1)
 
-# Skeleton Configuration
+# Skeleton Configuration — loaded from environment (never hardcode device MACs)
 SKELETON_BLE_NAME = "Animated Skelly"
-SKELETON_BLE_MAC = "24:F4:95:CA:21:91"
+SKELETON_BLE_MAC = os.environ.get("SKELETON_BLE_ADDRESS", "")
 
 # BLE Configuration
 WRITE_UUID = "0000ae01-0000-1000-8000-00805f9b34fb"
@@ -106,7 +107,7 @@ class SkeletonBLEService:
             
             print("  ✅ Classic BT audio mode enabled!")
             print("  📱 Device now advertising as: 'Animated Skelly(Live)'")
-            print("  📍 MAC: 24:F4:95:F4:CA:45, PIN: 1234")
+            print("  📍 Check SKELETON_AUDIO_BLE_ADDRESS and SKELETON_AUDIO_PIN env vars for connection info")
             return True
             
         except Exception as e:

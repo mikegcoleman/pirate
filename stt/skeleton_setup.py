@@ -6,6 +6,7 @@ Run this once before starting the main pirate assistant.
 """
 
 import asyncio
+import os
 import subprocess
 from typing import Optional
 
@@ -15,11 +16,11 @@ except ImportError:
     print("❌ Bleak not installed. Install with: pip install bleak>=1.1.0")
     exit(1)
 
-# Skeleton Configuration
+# Skeleton Configuration — loaded from environment (never hardcode device MACs or PINs)
 SKELETON_BLE_NAME = "Animated Skelly"
-SKELETON_BLE_MAC = "24:F4:95:CA:21:91"      # BLE control interface
-SKELETON_AUDIO_MAC = "24:F4:95:F4:CA:45"    # Classic BT audio interface
-SKELETON_AUDIO_PIN = "1234"                 # Classic BT pairing PIN
+SKELETON_BLE_MAC = os.environ.get("SKELETON_BLE_ADDRESS", "")       # BLE control interface
+SKELETON_AUDIO_MAC = os.environ.get("SKELETON_AUDIO_BLE_ADDRESS", "")  # Classic BT audio interface
+SKELETON_AUDIO_PIN = os.environ.get("SKELETON_AUDIO_PIN", "")         # Classic BT pairing PIN
 
 # BLE Configuration
 WRITE_UUID = "0000ae01-0000-1000-8000-00805f9b34fb"
