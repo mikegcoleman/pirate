@@ -144,3 +144,31 @@ This Node.js version provides:
 - **Identical functionality** to Python version
 - **Better resource utilization**
 - **Simplified deployment**
+## Security Considerations
+
+### TLS / HTTPS (Strongly Recommended for Production)
+
+All communication between the Raspberry Pi frontend and this API server currently
+uses plain HTTP. On a LAN this means:
+
+- Conversation audio and text transit the network in cleartext.
+- Anyone on the same subnet can capture interactions with `tcpdump` / Wireshark.
+- No certificate validation means a MITM attacker on the LAN can intercept or
+  modify requests.
+
+**Recommended hardening:** Run this API behind a TLS-terminating reverse proxy
+such as [Caddy](https://caddyserver.com/) or nginx with a self-signed certificate
+or a certificate from a local CA (e.g. `mkcert`). Then configure `API_URL` on
+the client to use `https://`.
+
+### API Authentication
+
+Set the `API_KEY` environment variable to a strong random secret. Callers must
+send `Authorization: Bearer <key>` with every request. Without this, any host
+that can reach port 8080 can consume LLM compute and ElevenLabs TTS credits.
+
+### CORS
+
+Set `CORS_ORIGINS` to the specific origin(s) of your frontend (e.g.
+`http://raspberrypi.local`) instead of the default wildcard `*`, especially
+when the API is reachable beyond the LAN.
