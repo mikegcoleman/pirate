@@ -5,6 +5,7 @@ Provides BLE movement control for the Animated Skelly device during speech.
 """
 
 import asyncio
+import os
 import random
 import time
 from typing import Optional, List
@@ -17,9 +18,9 @@ except ImportError:
     BleakClient = None
     BleakScanner = None
 
-# BLE Configuration
+# BLE Configuration — loaded from environment (never hardcode device MACs)
 SKELETON_NAME = "Animated Skelly"
-SKELETON_MAC = "24:F4:95:CA:21:91"  # Note: Different from Bluetooth speaker!
+SKELETON_MAC = os.environ.get("SKELETON_BLE_ADDRESS", "")
 WRITE_UUID = "0000ae01-0000-1000-8000-00805f9b34fb"  # AE01 (write)
 NOTIFY_UUID = "0000ae02-0000-1000-8000-00805f9b34fb"  # AE02 (notify)
 AUTH_COMMAND = "02 70 61 73 73"  # 0x02 + ASCII "pass"

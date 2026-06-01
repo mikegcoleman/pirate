@@ -5,12 +5,28 @@ Handles interactive pairing with PIN code for Bluetooth devices.
 """
 
 import pexpect
+import re
 import sys
 import time
 
+_MAC_RE = re.compile(r'^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$')
+
+
+def _validate_mac(mac: str) -> None:
+    """Raise ValueError if mac is not a valid XX:XX:XX:XX:XX:XX address."""
+    if not _MAC_RE.match(mac):
+        raise ValueError("Invalid MAC address format: expected XX:XX:XX:XX:XX:XX")
+
 def pair_device(mac_address, pin_code="1234", timeout=30):
     """Pair with a Bluetooth device using PIN code."""
-    print(f"🔵 Attempting to pair with {mac_address} using PIN: {pin_code}")
+    # Validate MAC address regardless of call site
+    try:
+        _validate_mac(mac_address)
+    except ValueError as exc:
+        print(f"❌ {exc}")
+        return False
+
+    print(f"🔵 Attempting to pair with device using provided credentials")
     
     try:
         # Start bluetoothctl
@@ -117,11 +133,18 @@ def pair_device(mac_address, pin_code="1234", timeout=30):
 def main():
     if len(sys.argv) < 2:
         print("Usage: python pair_bluetooth.py <MAC_ADDRESS> [PIN_CODE]")
-        print("Example: python pair_bluetooth.py 24:F4:95:F4:CA:45 1234")
+        print("Example: python pair_bluetooth.py AA:BB:CC:DD:EE:FF 1234")
         sys.exit(1)
     
     mac_address = sys.argv[1]
     pin_code = sys.argv[2] if len(sys.argv) > 2 else "1234"
+    
+    # Validate MAC address format before sending to bluetoothctl
+    try:
+        _validate_mac(mac_address)
+    except ValueError as exc:
+        print(f"❌ {exc}")
+        sys.exit(1)
     
     success = pair_device(mac_address, pin_code)
     

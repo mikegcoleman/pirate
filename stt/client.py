@@ -24,6 +24,7 @@ Audio Routing Notes:
 import stt
 import subprocess
 import os
+import signal
 import asyncio
 import httpx
 import sys
@@ -36,6 +37,21 @@ import threading
 import time
 from functools import partial
 from typing import Optional
+
+# ── Temp-file registry for SIGTERM cleanup ────────────────────────────────────
+_tmp_files: list[str] = []
+
+def _sigterm_handler(signum, frame):
+    """Clean up any registered temp files on SIGTERM before exit."""
+    for path in _tmp_files:
+        try:
+            if os.path.exists(path):
+                os.unlink(path)
+        except Exception:
+            pass
+    sys.exit(0)
+
+signal.signal(signal.SIGTERM, _sigterm_handler)
 
 # Import structured logging utilities
 from logger_utils import (
@@ -197,6 +213,9 @@ def _play_with_paplay(audio_bytes: bytes, sink_name: Optional[str] = None, suffi
             os.fsync(tmp_file.fileno())
             tmp_path = tmp_file.name
 
+        # Register for SIGTERM cleanup
+        _tmp_files.append(tmp_path)
+
         cmd = [AUDIO_PLAYER]
         if sink_name:
             cmd.extend(["--device", sink_name])
@@ -220,6 +239,11 @@ def _play_with_paplay(audio_bytes: bytes, sink_name: Optional[str] = None, suffi
             try:
                 os.unlink(tmp_path)
             except Exception:
+                pass
+            # Remove from registry after cleanup
+            try:
+                _tmp_files.remove(tmp_path)
+            except ValueError:
                 pass
 
 
@@ -266,6 +290,37 @@ def resolve_sink_name() -> Optional[str]:
         return f"bluez_output.{BLUETOOTH_SPEAKER.replace(':', '_')}.1"
     return None
 
+# ── Input-validation helpers ─────────────────────────────────────────────────
+_MAC_RE = re.compile(r'^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$')
+
+
+def _validate_mac_address(mac: str) -> None:
+    """Raise ValueError if mac is not a valid XX:XX:XX:XX:XX:XX address."""
+    if not _MAC_RE.match(mac):
+        raise ValueError("MAC address must be in XX:XX:XX:XX:XX:XX format")
+
+
+def _validate_mic_device(device: str) -> None:
+    """Reject MIC_DEVICE values containing shell-unsafe characters.
+
+    Since MIC_DEVICE is passed as a subprocess list argument (no shell=True)
+    the only characters that can cause real harm are null bytes and newlines
+    (which would truncate or inject extra arguments at the C layer).
+    Spaces, commas, parentheses etc. are valid in PulseAudio device names
+    such as 'Antlion USB Microphone: Audio (hw:2,0)' and are safe here.
+    """
+    if re.search(r'[\x00\n\r]', device):
+        raise ValueError("MIC_DEVICE contains invalid characters (null byte or newline)")
+    if len(device) > 256:
+        raise ValueError("MIC_DEVICE is unreasonably long")
+
+
+def _validate_mic_volume(volume: str) -> None:
+    """Raise ValueError if volume is not an integer percentage 0-200."""
+    if not re.match(r'^[0-9]{1,3}%$', volume) or not (0 <= int(volume[:-1]) <= 200):
+        raise ValueError("MIC_VOLUME must be an integer percentage between 0% and 200%")
+
+
 def setup_microphone():
     """Configure microphone volume and sensitivity settings."""
     mic_device = os.getenv("MIC_DEVICE", "")
@@ -275,6 +330,14 @@ def setup_microphone():
         print("🎤 No specific microphone configured, using system default")
         return True
     
+    # Validate inputs before passing to system commands
+    try:
+        _validate_mic_device(mic_device)
+        _validate_mic_volume(mic_volume)
+    except ValueError as exc:
+        print(f"⚠️ Microphone configuration error: {exc}")
+        return False
+
     print(f"🎤 Setting up microphone: {mic_device}")
     print(f"🔊 Setting volume to: {mic_volume}")
     
@@ -309,8 +372,15 @@ def connect_bluetooth_speaker():
     if not BLUETOOTH_SPEAKER:
         print("🔊 No Bluetooth speaker configured")
         return True
-    
-    print(f"🔵 Connecting to Bluetooth speaker: {BLUETOOTH_SPEAKER}")
+
+    # Validate MAC address before using it in any command
+    try:
+        _validate_mac_address(BLUETOOTH_SPEAKER)
+    except ValueError as exc:
+        print(f"❌ Bluetooth speaker configuration error: {exc}")
+        return False
+
+    print(f"🔵 Connecting to Bluetooth speaker")
     
     try:
         # Check if bluetoothctl is available
@@ -319,16 +389,18 @@ def connect_bluetooth_speaker():
             print("❌ bluetoothctl not found - install bluez-utils")
             return False
         
-        # First, try to connect (in case already paired)
-        connect_cmd = f"echo 'connect {BLUETOOTH_SPEAKER}' | bluetoothctl"
-        result = subprocess.run(connect_cmd, shell=True, capture_output=True, text=True, timeout=10)
+        # Use list-form subprocess — no shell=True, no interpolation risk
+        result = subprocess.run(
+            ["bluetoothctl", "connect", BLUETOOTH_SPEAKER],
+            capture_output=True, text=True, timeout=10
+        )
         
         if "Connection successful" in result.stdout or "Already connected" in result.stdout:
             print("✅ Bluetooth speaker connected successfully")
             return True
         
-        print(f"⚠️ Bluetooth connection may have failed")
-        print(f"💡 Try pairing manually: bluetoothctl -> pair {BLUETOOTH_SPEAKER} -> PIN: {BLUETOOTH_PIN}")
+        print("⚠️ Bluetooth connection may have failed")
+        print("💡 Try pairing manually: bluetoothctl → pair <MAC> → enter PIN")
         return False
             
     except subprocess.TimeoutExpired:
@@ -679,6 +751,21 @@ async def main():
     if SKELETON_AVAILABLE and SKELETON_MOVEMENT_ENABLED:
         print("🤖 Checking for Mr. Bones skeleton connections...")
         try:
+            # Validate skeleton MACs at startup before any BLE/BT operations
+            skeleton_ble_mac = os.getenv("SKELETON_BLE_ADDRESS", "")
+            skeleton_audio_mac = os.getenv("SKELETON_AUDIO_BLE_ADDRESS", "")
+            if skeleton_ble_mac:
+                try:
+                    _validate_mac_address(skeleton_ble_mac)
+                except ValueError:
+                    print("❌ SKELETON_BLE_ADDRESS is not a valid MAC address. Check your .env.")
+                    sys.exit(1)
+            if skeleton_audio_mac:
+                try:
+                    _validate_mac_address(skeleton_audio_mac)
+                except ValueError:
+                    print("❌ SKELETON_AUDIO_BLE_ADDRESS is not a valid MAC address. Check your .env.")
+                    sys.exit(1)
             # Verify BLE service is running (don't start it - should already be running)
             from skeleton_ble_service import service
             
@@ -688,23 +775,26 @@ async def main():
                 print("🚫 Exiting - BLE service must be running")
                 sys.exit(1)
             else:
-                print("✅ Skeleton BLE service already running")
+                            print("✅ Skeleton BLE service already running")
                 
             # Check if Classic BT audio device is connected
-            print("🔍 Verifying Classic BT audio connection...")
-            bt_check = subprocess.run(
-                ["bluetoothctl", "info", "24:F4:95:F4:CA:45"],
-                capture_output=True,
-                text=True
-            )
-            
-            if "Connected: yes" not in bt_check.stdout:
-                print("❌ FATAL: Classic BT audio not connected!")
-                print("💡 Run skeleton_bt_pair.py to pair the audio device")
-                print("🚫 Exiting - no point running without audio")
-                sys.exit(1)
-            
-            print("✅ Classic BT audio verified connected")
+            skeleton_audio_mac = os.getenv("SKELETON_AUDIO_BLE_ADDRESS", "")
+            if skeleton_audio_mac:
+                print("🔍 Verifying Classic BT audio connection...")
+                bt_check = subprocess.run(
+                    ["bluetoothctl", "info", skeleton_audio_mac],
+                    capture_output=True,
+                    text=True
+                )
+                
+                if "Connected: yes" not in bt_check.stdout:
+                    print("❌ FATAL: Classic BT audio not connected!")
+                    print("💡 Run skeleton_bt_pair.py to pair the audio device")
+                    print("🚫 Exiting - no point running without audio")
+                    sys.exit(1)
+                print("✅ Classic BT audio verified connected")
+            else:
+                print("⚠️ SKELETON_AUDIO_BLE_ADDRESS not set — skipping Classic BT audio check")
             
             # Initialize movement controller using the existing service's client
             skeleton_controller = await get_skeleton_controller()
