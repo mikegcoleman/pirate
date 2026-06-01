@@ -1,6 +1,7 @@
 const express = require('express');
 const axios = require('axios');
 const fs = require('fs').promises;
+const helmet = require('helmet');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const { ElevenLabsClient } = require('elevenlabs');
@@ -8,6 +9,11 @@ require('dotenv').config();
 
 const app = express();
 const port = process.env.PORT || 8080;
+
+// Security headers (helmet sets Content-Security-Policy, X-Frame-Options, etc.)
+app.use(helmet());
+app.disable('x-powered-by');
+app.use((_req, res, next) => { res.removeHeader('Server'); next(); });
 
 // Environment configuration for logging
 const LOG_LEVEL = (process.env.LOG_LEVEL || 'info').toLowerCase();
@@ -42,7 +48,8 @@ function log(level, msg, reqId = null, meta = {}) {
 }
 
 // Middleware
-app.use(express.json());
+// Limit request body to 1 MB to prevent memory exhaustion (DoS)
+app.use(express.json({ limit: '1mb' }));
 
 // Request ID middleware - must come before CORS
 app.use((req, res, next) => {
@@ -69,10 +76,32 @@ app.use((req, res, next) => {
     next();
 });
 
+// API key authentication middleware (applied to /api/* routes)
+// Set API_KEY env var to require callers to pass: Authorization: Bearer <key>
+app.use('/api', (req, res, next) => {
+    const requiredKey = process.env.API_KEY;
+    if (requiredKey) {
+        const authHeader = req.headers['authorization'] || '';
+        const provided = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+        if (!provided || provided !== requiredKey) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+    }
+    next();
+});
+
 // Enable CORS if configured
 if (process.env.ENABLE_CORS === 'true') {
+    // Restrict allowed origins via CORS_ORIGINS env var (comma-separated list).
+    // Defaults to '*' for backward compatibility but should be locked down in production.
+    const allowedOrigins = (process.env.CORS_ORIGINS || '*')
+        .split(',').map(s => s.trim()).filter(Boolean);
+
     app.use((req, res, next) => {
-        res.header('Access-Control-Allow-Origin', '*');
+        const origin = req.headers['origin'];
+        if (allowedOrigins.includes('*') || (origin && allowedOrigins.includes(origin))) {
+            res.header('Access-Control-Allow-Origin', origin || '*');
+        }
         res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
         res.header('Access-Control-Allow-Headers', `Content-Type, Authorization, ${REQUEST_ID_HEADER}`);
         res.header('Access-Control-Expose-Headers', REQUEST_ID_HEADER);
@@ -209,7 +238,14 @@ async function callLlmApi(chatRequest, reqId) {
     const model = chatRequest.model || 'unknown';
     log('info', 'Calling LLM endpoint', reqId, { endpoint: llmEndpoint, model });
 
-    const optimizedRequest = { ...chatRequest };
+    // Whitelist only known-safe LLM parameters to prevent parameter injection
+    const optimizedRequest = {
+        model: chatRequest.model,
+        messages: chatRequest.messages,
+        ...(chatRequest.temperature !== undefined && { temperature: chatRequest.temperature }),
+        ...(chatRequest.max_tokens !== undefined && { max_tokens: chatRequest.max_tokens }),
+        ...(chatRequest.stream !== undefined && { stream: chatRequest.stream }),
+    };
 
     // Send request to LLM API
     log('debug', 'Sending request to LLM', reqId);
@@ -399,7 +435,7 @@ app.post('/api/chat/stream', async (req, res) => {
                         type: 'chunk_error',
                         chunk_id: chunkId,
                         text_chunk: sentence,
-                        error: error.message
+                        message: 'An internal error occurred'
                     };
                     res.write(`data: ${JSON.stringify(errorData)}\n\n`);
                 }
@@ -414,7 +450,8 @@ app.post('/api/chat/stream', async (req, res) => {
             log('error', 'Error in streaming response generation', reqId, {
                 error: error.message
             }, true);
-            res.write(`data: ${JSON.stringify({ type: 'error', message: error.message })}\n\n`);
+            log('error', 'Streaming response generation failed', reqId, { error: error.message });
+            res.write(`data: ${JSON.stringify({ type: 'error', message: 'An internal error occurred' })}\n\n`);
             res.end();
         }
 
@@ -432,7 +469,7 @@ async function validateApiEnvironment() {
     
     // Check required environment variables
     if (!process.env.LLM_BASE_URL) {
-        errors.append('LLM_BASE_URL environment variable is not set');
+        errors.push('LLM_BASE_URL environment variable is not set');
     }
     
     if (!process.env.ELEVENLABS_API_KEY) {

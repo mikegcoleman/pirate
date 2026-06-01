@@ -8,15 +8,22 @@
     "dev": "nodemon app.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": ["llm", "tts", "pirate", "voice", "api"],
+  "keywords": [
+    "llm",
+    "tts",
+    "pirate",
+    "voice",
+    "api"
+  ],
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "express": "^4.18.2",
-    "dotenv": "^16.3.1",
     "axios": "^1.6.0",
-    "uuid": "^9.0.1",
-    "elevenlabs": "^1.59.0"
+    "dotenv": "^16.3.1",
+    "elevenlabs": "^1.59.0",
+    "express": "^4.18.2",
+    "helmet": "^8.2.0",
+    "uuid": "^11.1.1"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
