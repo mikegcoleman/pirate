@@ -7,9 +7,9 @@ import requests
 import os
 from pathlib import Path
 
-# ElevenLabs configuration from combined/.env
-ELEVENLABS_API_KEY = "sk_71b236fc23adeebf226c35960f92c2068bb438e519665302"
-ELEVENLABS_VOICE_ID = "Myn1LuZgd2qPMOg9BNtC"
+# ElevenLabs configuration — set via environment variables (never hardcode API keys)
+ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY")
+ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "")
 
 # 25 Pirate filler phrases
 FILLER_PHRASES = [
