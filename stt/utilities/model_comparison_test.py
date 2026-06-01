@@ -3,7 +3,7 @@
 Model Comparison Test - Compare how different models respond to the same question
 Tests all models from models_list.json with the same prompt and question.
 
-Models starting with "ai/" use Docker Model Runner at 192.168.50.66:12434
+Models starting with "ai/" use Docker Model Runner (URL from DOCKER_MODEL_RUNNER_URL env var)
 Other models use OpenAI API
 """
 
