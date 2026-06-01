@@ -1,10 +1,26 @@
 #!/bin/bash
 # Interactive Bluetooth pairing script
+# Set MAC and PIN via environment variables or pass them as arguments:
+#   MAC=AA:BB:CC:DD:EE:FF PIN=0000 ./pair_with_expect.sh
+# or:
+#   ./pair_with_expect.sh AA:BB:CC:DD:EE:FF 0000
 
-MAC="24:F4:95:F4:CA:45"
-PIN="1234"
+MAC="${1:-${MAC:-}}"
+PIN="${2:-${PIN:-}}"
 
-echo "Pairing with $MAC using PIN $PIN"
+if [ -z "$MAC" ] || [ -z "$PIN" ]; then
+    echo "Usage: MAC=<address> PIN=<pin> $0" >&2
+    echo "  or:  $0 <MAC> <PIN>" >&2
+    exit 1
+fi
+
+# Validate MAC address format (XX:XX:XX:XX:XX:XX)
+if ! echo "$MAC" | grep -qE '^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$'; then
+    echo "Error: invalid MAC address format" >&2
+    exit 1
+fi
+
+echo "Pairing with device using provided credentials"
 
 expect << EOF
 spawn bluetoothctl
