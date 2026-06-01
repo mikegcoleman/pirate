@@ -169,7 +169,7 @@ AMBIENT_VOLUME=0.3      # Background volume (0.0 to 1.0, low to not interfere)
 ### Model Comparison Test Restructuring (Previous Session)
 - ✅ Restructured `models_list.json` to separate DMR and OpenAI models into `"dmr"` and `"openai"` sections
 - ✅ Updated `model_comparison_test.py` to route requests to correct provider based on model categorization
-- ❌ **BLOCKER**: Windows machine (192.168.50.66:12434) Docker Model Runner not responding - need to start DMR service
+- ❌ **BLOCKER**: Windows machine (<YOUR_API_SERVER_IP>:12434) Docker Model Runner not responding - need to start DMR service
 - 🔧 **Next Steps**: Start Docker Model Runner on Windows machine, verify firewall settings, update models_list.json with actual available models
 
 ### TTS GPU Acceleration Fixed (Latest)
@@ -311,8 +311,8 @@ The project integrates with Home Depot's 6.5' "Animated Skelly" BLE device to pr
 
 ### Device Specifications
 - **Device Name**: "Animated Skelly"
-- **BLE MAC Address**: `24:F4:95:CA:21:91` (control interface)
-- **Classic BT MAC Address**: `24:F4:95:F4:CA:45` (audio interface) 
+- **BLE MAC Address**: `<SKELETON_BLE_ADDRESS>` (control interface)
+- **Classic BT MAC Address**: `<SKELETON_AUDIO_BLE_ADDRESS>` (audio interface) 
 - **Primary Service**: `0000ae00-0000-1000-8000-00805f9b34fb` (JL RCSP)
 - **Write Characteristic**: `0000ae01-0000-1000-8000-00805f9b34fb` (AE01, handle 0x0082)
 - **Notify Characteristic**: `0000ae02-0000-1000-8000-00805f9b34fb` (AE02, handle 0x0084)
@@ -403,7 +403,7 @@ async def enable_classic_bt_audio(client):
     # 3. Trigger record mode (enables Classic BT)
     await send_cmd(client, "AA FD 01 D2")  # Record mode trigger
     
-    # Classic BT now advertising as "Animated Skelly(Live)" at 24:F4:95:F4:CA:45
+    # Classic BT now advertising as "Animated Skelly(Live)" at <SKELETON_AUDIO_BLE_ADDRESS>
     # Use PIN: 1234 for pairing
 ```
 
@@ -436,8 +436,8 @@ await skeleton_controller.set_lights(mode="pulsing", color="red", brightness=200
 ### Environment Variables for Skeleton Integration
 ```bash
 # Skeleton Control
-SKELETON_BLE_ADDRESS=24:F4:95:CA:21:91  # Optional: specific BLE address
-SKELETON_AUDIO_BLE_ADDRESS=24:F4:95:F4:CA:45  # Classic BT for audio
+SKELETON_BLE_ADDRESS=<SKELETON_BLE_ADDRESS>  # Optional: specific BLE address
+SKELETON_AUDIO_BLE_ADDRESS=<SKELETON_AUDIO_BLE_ADDRESS>  # Classic BT for audio
 SKELETON_AUDIO_PIN=1234  # Classic BT pairing PIN
 
 # Movement Settings

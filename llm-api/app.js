@@ -83,7 +83,14 @@ app.use('/api', (req, res, next) => {
     if (requiredKey) {
         const authHeader = req.headers['authorization'] || '';
         const provided = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
-        if (!provided || provided !== requiredKey) {
+        if (!provided) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+        // Use timing-safe comparison to prevent timing attacks
+        const crypto = require('crypto');
+        const a = Buffer.from(provided);
+        const b = Buffer.from(requiredKey);
+        if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
             return res.status(401).json({ error: 'Unauthorized' });
         }
     }
@@ -238,13 +245,14 @@ async function callLlmApi(chatRequest, reqId) {
     const model = chatRequest.model || 'unknown';
     log('info', 'Calling LLM endpoint', reqId, { endpoint: llmEndpoint, model });
 
-    // Whitelist only known-safe LLM parameters to prevent parameter injection
+    // Whitelist only known-safe LLM parameters to prevent parameter injection.
+    // 'stream' is intentionally excluded — it is always set server-side based on
+    // which endpoint is called, so clients cannot influence response-parsing behaviour.
     const optimizedRequest = {
         model: chatRequest.model,
         messages: chatRequest.messages,
         ...(chatRequest.temperature !== undefined && { temperature: chatRequest.temperature }),
         ...(chatRequest.max_tokens !== undefined && { max_tokens: chatRequest.max_tokens }),
-        ...(chatRequest.stream !== undefined && { stream: chatRequest.stream }),
     };
 
     // Send request to LLM API
@@ -334,10 +342,9 @@ app.get('/health', (req, res) => {
             timestamp: new Date().toISOString()
         });
     } catch (error) {
-        res.status(500).json({
-            status: 'unhealthy',
-            error: error.message
-        });
+        // Do not expose internal error details to unauthenticated callers
+        log('error', 'Health check error', null, { error: error.message });
+        res.status(500).json({ status: 'unhealthy' });
     }
 });
 
@@ -563,6 +570,11 @@ async function startServer() {
         // Initialize TTS provider
         ttsProvider = new ElevenLabsTTSProvider();
         
+        // Warn if API is running without authentication
+        if (!process.env.API_KEY) {
+            log('warn', 'WARNING: API_KEY is not set — the API is running without authentication');
+        }
+
         // Start the server
         app.listen(port, '0.0.0.0', () => {
             console.log(`✅ Server starting on http://localhost:${port}`);
