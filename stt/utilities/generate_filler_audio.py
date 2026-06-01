@@ -82,6 +82,19 @@ def generate_audio(text, filename):
 
 def main():
     """Generate all filler phrase audio files"""
+    # Guard: ensure API credentials are set before making any network calls
+    if not ELEVENLABS_API_KEY:
+        raise EnvironmentError(
+            "ELEVENLABS_API_KEY is not set. "
+            "Export it before running this script: "
+            "export ELEVENLABS_API_KEY=your_key_here"
+        )
+    if not ELEVENLABS_VOICE_ID:
+        raise EnvironmentError(
+            "ELEVENLABS_VOICE_ID is not set. "
+            "Export it before running this script."
+        )
+
     print("🎵 Generating pirate filler phrases...")
     
     success_count = 0

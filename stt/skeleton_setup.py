@@ -7,6 +7,7 @@ Run this once before starting the main pirate assistant.
 
 import asyncio
 import os
+import re
 import subprocess
 from typing import Optional
 
@@ -21,6 +22,14 @@ SKELETON_BLE_NAME = "Animated Skelly"
 SKELETON_BLE_MAC = os.environ.get("SKELETON_BLE_ADDRESS", "")       # BLE control interface
 SKELETON_AUDIO_MAC = os.environ.get("SKELETON_AUDIO_BLE_ADDRESS", "")  # Classic BT audio interface
 SKELETON_AUDIO_PIN = os.environ.get("SKELETON_AUDIO_PIN", "")         # Classic BT pairing PIN
+
+_MAC_RE = re.compile(r'^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$')
+
+
+def _validate_mac(mac: str, var_name: str = "MAC") -> None:
+    """Raise ValueError if mac is not a valid XX:XX:XX:XX:XX:XX address."""
+    if not _MAC_RE.match(mac):
+        raise ValueError(f"{var_name} must be in XX:XX:XX:XX:XX:XX format")
 
 # BLE Configuration
 WRITE_UUID = "0000ae01-0000-1000-8000-00805f9b34fb"
@@ -100,6 +109,20 @@ async def setup_ble_and_audio(verbose: bool = True):
     if verbose:
         print("🤖 Mr. Bones Skeleton Connection Setup")
         print("=" * 45)
+
+    # Validate MAC addresses before any BLE/BT operations
+    if SKELETON_AUDIO_MAC:
+        try:
+            _validate_mac(SKELETON_AUDIO_MAC, "SKELETON_AUDIO_BLE_ADDRESS")
+        except ValueError as exc:
+            print(f"❌ {exc}")
+            return False
+    if SKELETON_BLE_MAC:
+        try:
+            _validate_mac(SKELETON_BLE_MAC, "SKELETON_BLE_ADDRESS")
+        except ValueError as exc:
+            print(f"❌ {exc}")
+            return False
     
     # Step 0: Clean up any existing BT pairing
     if not cleanup_existing_bt_pairing():

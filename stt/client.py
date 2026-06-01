@@ -292,19 +292,27 @@ def resolve_sink_name() -> Optional[str]:
 
 # ── Input-validation helpers ─────────────────────────────────────────────────
 _MAC_RE = re.compile(r'^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$')
-_MIC_DEVICE_RE = re.compile(r'^[a-zA-Z0-9_@.:\-]+$')
 
 
 def _validate_mac_address(mac: str) -> None:
     """Raise ValueError if mac is not a valid XX:XX:XX:XX:XX:XX address."""
     if not _MAC_RE.match(mac):
-        raise ValueError("BLUETOOTH_SPEAKER must be a valid MAC address (XX:XX:XX:XX:XX:XX)")
+        raise ValueError("MAC address must be in XX:XX:XX:XX:XX:XX format")
 
 
 def _validate_mic_device(device: str) -> None:
-    """Raise ValueError if device name contains unsafe characters."""
-    if not _MIC_DEVICE_RE.match(device):
-        raise ValueError("MIC_DEVICE contains invalid characters")
+    """Reject MIC_DEVICE values containing shell-unsafe characters.
+
+    Since MIC_DEVICE is passed as a subprocess list argument (no shell=True)
+    the only characters that can cause real harm are null bytes and newlines
+    (which would truncate or inject extra arguments at the C layer).
+    Spaces, commas, parentheses etc. are valid in PulseAudio device names
+    such as 'Antlion USB Microphone: Audio (hw:2,0)' and are safe here.
+    """
+    if re.search(r'[\x00\n\r]', device):
+        raise ValueError("MIC_DEVICE contains invalid characters (null byte or newline)")
+    if len(device) > 256:
+        raise ValueError("MIC_DEVICE is unreasonably long")
 
 
 def _validate_mic_volume(volume: str) -> None:
@@ -743,6 +751,21 @@ async def main():
     if SKELETON_AVAILABLE and SKELETON_MOVEMENT_ENABLED:
         print("🤖 Checking for Mr. Bones skeleton connections...")
         try:
+            # Validate skeleton MACs at startup before any BLE/BT operations
+            skeleton_ble_mac = os.getenv("SKELETON_BLE_ADDRESS", "")
+            skeleton_audio_mac = os.getenv("SKELETON_AUDIO_BLE_ADDRESS", "")
+            if skeleton_ble_mac:
+                try:
+                    _validate_mac_address(skeleton_ble_mac)
+                except ValueError:
+                    print("❌ SKELETON_BLE_ADDRESS is not a valid MAC address. Check your .env.")
+                    sys.exit(1)
+            if skeleton_audio_mac:
+                try:
+                    _validate_mac_address(skeleton_audio_mac)
+                except ValueError:
+                    print("❌ SKELETON_AUDIO_BLE_ADDRESS is not a valid MAC address. Check your .env.")
+                    sys.exit(1)
             # Verify BLE service is running (don't start it - should already be running)
             from skeleton_ble_service import service
             

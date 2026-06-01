@@ -19,7 +19,14 @@ def _validate_mac(mac: str) -> None:
 
 def pair_device(mac_address, pin_code="1234", timeout=30):
     """Pair with a Bluetooth device using PIN code."""
-    print(f"🔵 Attempting to pair with {mac_address} using PIN: {pin_code}")
+    # Validate MAC address regardless of call site
+    try:
+        _validate_mac(mac_address)
+    except ValueError as exc:
+        print(f"❌ {exc}")
+        return False
+
+    print(f"🔵 Attempting to pair with device using provided credentials")
     
     try:
         # Start bluetoothctl
